@@ -54,6 +54,13 @@ CONFIG_DEFAULT: Dict[str, GSC] = {
         "用图片卡片展示结果；关闭或渲染环境缺失时自动回退纯文本",
         True,
     ),
+    "auto_install_render": GsBoolConfig(
+        "自动安装渲染依赖",
+        "启动时检测卡片所需的 playwright 与 Chromium 内核，缺失则自动下载安装"
+        "（Chromium 约 150MB，视网络需数分钟，期间不影响其他指令）；"
+        "关闭后缺失依赖时只会回退纯文本，需自行执行 python -m playwright install chromium",
+        True,
+    ),
     "send_voice": GsBoolConfig("语音发送", "以语音消息发送音频（歌曲较长时体验更好）", True),
     "send_file": GsBoolConfig("文件发送", "额外再发一份音频文件；语音能正常收听时无需开启", False),
     "local_file_ref": GsBoolConfig(

@@ -106,6 +106,18 @@ async def close_browser() -> None:
     await _discard_browser()
 
 
+async def render_ready() -> bool:
+    """Report whether a browser can actually be launched right now.
+
+    仅检查依赖包是不够的：playwright 装好了但 Chromium 内核没下载时，
+    ``chromium.launch()`` 同样会失败，所以这里直接尝试启动一次。
+
+    Returns:
+        ``True`` when Chromium starts successfully.
+    """
+    return await _get_browser() is not None
+
+
 async def _open_page() -> Page | None:
     """Open a render page, rebuilding Chromium once when it went stale.
 

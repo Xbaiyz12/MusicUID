@@ -1,18 +1,25 @@
-"""生命周期钩子：进程关闭 / 插件重载时释放常驻资源。"""
+"""生命周期钩子：启动时补齐渲染依赖，进程关闭 / 插件重载时释放常驻资源。"""
 
 from __future__ import annotations
 
+import sys
 import asyncio
+import importlib.util
 
 from gsuid_core.logger import logger
-from gsuid_core.server import on_core_shutdown
+from gsuid_core.server import on_core_start, on_core_shutdown
 
 from ..utils.http import close_client
-from ..utils.render import close_browser
+from ..utils.render import render_ready, close_browser
+from ..musicuid_config import music_config
 from ..utils.resource.RESOURCE_PATH import TEMP_PATH
 
 # 单个释放动作的等待上限，避免拖住进程退出
 RELEASE_TIMEOUT_SEC = 10
+# 补依赖要跑 pip 并下载 Chromium 内核，给足时间但别无限等
+INSTALL_TIMEOUT_SEC = 900
+
+_RENDER_PACKAGE = "playwright"
 
 
 def clean_temp_files() -> int:
@@ -27,6 +34,69 @@ def clean_temp_files() -> int:
             path.unlink(missing_ok=True)
             removed += 1
     return removed
+
+
+async def _run_setup(cmd: list[str]) -> bool:
+    """Run one setup command, logging only its outcome.
+
+    Args:
+        cmd: Command and its arguments.
+
+    Returns:
+        ``True`` when the command exited successfully.
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+    except OSError as e:
+        logger.warning(f"[MusicUID] 无法执行 {' '.join(cmd)}：{e}")
+        return False
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=INSTALL_TIMEOUT_SEC)
+    except asyncio.TimeoutError:
+        proc.kill()
+        logger.warning(f"[MusicUID] {' '.join(cmd)} 超时，已放弃")
+        return False
+    if proc.returncode == 0:
+        return True
+    tail = " / ".join((out or b"").decode("utf-8", errors="ignore").strip().splitlines()[-3:])
+    logger.warning(f"[MusicUID] {' '.join(cmd)} 失败（退出码 {proc.returncode}）：{tail}")
+    return False
+
+
+async def install_render_deps() -> None:
+    """Install the playwright package when missing, then download Chromium.
+
+    Chromium 内核有上百 MB，所以整个过程只在后台跑；任何一步失败都只降级为纯文本，
+    不影响其他指令。
+    """
+    python = sys.executable
+    logger.info("[MusicUID] 卡片渲染环境不完整，开始自动安装依赖（可能耗时数分钟）")
+    if importlib.util.find_spec(_RENDER_PACKAGE) is None:
+        if not await _run_setup([python, "-m", "pip", "install", _RENDER_PACKAGE]):
+            logger.warning("[MusicUID] playwright 安装失败，卡片将继续以纯文本返回")
+            return
+    if not await _run_setup([python, "-m", _RENDER_PACKAGE, "install", "chromium"]):
+        logger.warning("[MusicUID] Chromium 内核下载失败，卡片将继续以纯文本返回")
+        return
+    if await render_ready():
+        logger.info("[MusicUID] 卡片渲染环境已就绪，下次点歌即可收到图片卡片")
+    else:
+        logger.warning("[MusicUID] 依赖已装上但浏览器仍无法启动，建议重载一次插件")
+
+
+@on_core_start
+async def prepare_render_env() -> None:
+    """启动时检测渲染环境，缺失时在后台自动补齐（不阻塞启动）。"""
+    if not music_config.get_config("auto_install_render").data:
+        return
+    if await render_ready():
+        logger.debug("[MusicUID] 卡片渲染环境正常")
+        return
+    asyncio.create_task(install_render_deps())
 
 
 @on_core_shutdown

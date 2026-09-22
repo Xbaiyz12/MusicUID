@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import sys
 import asyncio
 import hashlib
 from types import SimpleNamespace
@@ -13,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from gsuid_core.models import Event
-from MusicUID.MusicUID import musicuid_resolve as resolve_module
+from MusicUID.MusicUID import musicuid_resolve as resolve_module, musicuid_lifecycle as lifecycle_module
 from MusicUID.MusicUID.utils.render import _env, close_browser
 from MusicUID.MusicUID.musicuid_play import session as session_module, parse_platform, default_platform
 from MusicUID.MusicUID.utils.delivery import ILLEGAL_NAME_CHARS, voice_segment, _safe_file_name
@@ -764,3 +765,55 @@ def test_close_browser_is_idempotent() -> None:
     # 从未启动过浏览器时也必须能安全收尾（插件重载 / 进程退出都会调它）
     asyncio.run(close_browser())
     asyncio.run(close_browser())
+
+
+# ---------------------------------------------------------------- 渲染依赖自检与自动安装
+
+
+def test_run_setup_returns_false_for_missing_command() -> None:
+    """命令不存在时返回 False，不能向调用方抛异常（否则会打断启动钩子）。"""
+    assert asyncio.run(lifecycle_module._run_setup(["definitely-not-a-real-command-xyz"])) is False
+
+
+def test_install_render_deps_downloads_chromium(monkeypatch: pytest.MonkeyPatch) -> None:
+    """playwright 包已存在时应只下载 Chromium 内核（这正是别的设备缺的那步）。"""
+    calls: list[list[str]] = []
+
+    async def fake_run(cmd: list[str]) -> bool:
+        calls.append(cmd)
+        return True
+
+    async def fake_ready() -> bool:
+        return True
+
+    monkeypatch.setattr(lifecycle_module, "_run_setup", fake_run)
+    monkeypatch.setattr(lifecycle_module, "render_ready", fake_ready)
+    asyncio.run(lifecycle_module.install_render_deps())
+    assert calls == [[sys.executable, "-m", "playwright", "install", "chromium"]]
+
+
+def test_install_render_deps_gives_up_on_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """下载失败时立即收手，不继续后续步骤，也不抛异常。"""
+    calls: list[list[str]] = []
+
+    async def fake_run(cmd: list[str]) -> bool:
+        calls.append(cmd)
+        return False
+
+    monkeypatch.setattr(lifecycle_module, "_run_setup", fake_run)
+    asyncio.run(lifecycle_module.install_render_deps())
+    assert len(calls) == 1
+
+
+def test_prepare_render_env_skips_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """关闭「自动安装渲染依赖」后连检测都不该做。"""
+    probed: list[str] = []
+
+    async def fake_ready() -> bool:
+        probed.append("ready")
+        return True
+
+    monkeypatch.setattr(lifecycle_module.music_config, "get_config", lambda name: SimpleNamespace(data=False))
+    monkeypatch.setattr(lifecycle_module, "render_ready", fake_ready)
+    asyncio.run(lifecycle_module.prepare_render_env())
+    assert probed == []

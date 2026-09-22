@@ -10,10 +10,13 @@
 | 依赖 | 说明 |
 | --- | --- |
 | GsCore | 已包含 httpx / jinja2 / Pillow |
-| `playwright` | 图片卡片渲染（可选）。未安装或未下载内核时自动回退纯文本 |
-| Chromium 内核 | `python -m playwright install chromium` |
+| `playwright` + Chromium | 图片卡片渲染。**插件启动时会自动检测并安装**，无需手动操作 |
 | `pycryptodome` | 网易云 weapi 加密（可选）。缺失时自动回退公开外链 |
 | `ffmpeg` | 语音压缩（可选）。音频超过「语音体积上限」时才会调用 |
+
+刚装上插件时，core 启动会在后台自动补齐卡片渲染环境（Chromium 内核约 150MB，视网络需数分钟），
+**期间其他指令照常可用**；装好后下次点歌即可收到图片卡片，无需重载。若不想让它自动下载，
+把配置项 `auto_install_render` 关掉即可，届时缺失依赖只会回退为纯文本。
 
 **不依赖任何外部 API 服务**：三个平台都走各自的公开接口直连，装上即可用。
 
@@ -68,6 +71,7 @@
 | `kugou_cookie` | 空 | 酷狗网页版完整 Cookie。填入后需单独购买专辑的曲目（周杰伦等原唱）可播 60 秒试听，完整版仍需在酷狗购买该专辑 |
 | `max_list` | `5` | 每平台条数（最大 10）。未指定平台时卡片总数 = 该值 × 3 |
 | `render_card` | `true` | 用图片卡片展示结果 |
+| `auto_install_render` | `true` | 启动时自动检测并安装卡片渲染依赖（playwright + Chromium 内核）|
 | `send_voice` | `true` | 以语音消息发送音频 |
 | `send_file` | `false` | 额外再发一份音频文件（语音能正常收听时无需开启） |
 | `local_file_ref` | `false` | 强制所有渠道用 `file://` 引用本地音频。默认按渠道自动选择 |
