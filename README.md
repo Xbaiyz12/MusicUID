@@ -46,6 +46,7 @@
 | `default_platform` | `netease` | 未指定平台时使用 |
 | `netease_cookie` | 空 | 网易云 `MUSIC_U` 的值，填入后 VIP 歌曲与高音质才生效 |
 | `netease_level` | `exhigh` | 网易云取流优先档位，拿不到会自动降到标准档 |
+| `qqmusic_cookie` | 空 | QQ音乐 `y.qq.com` 的完整 Cookie。填入后会员曲目与 320kbps 档位可播放，且搜索更稳定；必须含 `uin` 与 `qm_keyst` |
 | `kugou_cookie` | 空 | 酷狗网页版完整 Cookie。填入后需单独购买专辑的曲目（周杰伦等原唱）可播 60 秒试听，完整版仍需在酷狗购买该专辑 |
 | `max_list` | `5` | 每平台条数（最大 10）。未指定平台时卡片总数 = 该值 × 3 |
 | `render_card` | `true` | 用图片卡片展示结果 |
@@ -63,7 +64,7 @@
 | 平台 | 搜索 | 歌词 | 音频下发 | 分享链接解析 |
 | --- | --- | --- | --- | --- |
 | 网易云音乐 | ✅ | ✅ | ✅ 免费曲 + VIP（需 `netease_cookie`） | ✅ 单曲 / 歌单 / 专辑 |
-| QQ音乐 | ✅ | — | ✅ 免费曲；会员曲需 Cookie | — |
+| QQ音乐 | ✅ | — | ✅ 免费曲 + VIP 320kbps（需 `qqmusic_cookie`） | — |
 | 酷狗音乐 | ✅ | — | ✅ 免费曲完整版；需单独购买专辑的曲目给 60 秒试听（需 `kugou_cookie`） | — |
 
 三个平台的取流链路都由插件自己实现，各有一条免登录捷径：
@@ -72,9 +73,12 @@
   Cookie 里必须包含 `os=pc`，否则 VIP 歌曲只会返回 `br=0` 的空地址。拿不到时回退
   `/song/media/outer/url` 公开外链（128kbps，仅免费曲）。
 - **QQ音乐**：`u.y.qq.com/cgi-bin/musicu.fcg` 的 `vkey.GetVkeyServer/CgiGetVkey`。
-  匿名取流要用固定的 `guid=10000`、`uin=0`，且 `filename` 必须写成
-  `C400{songmid}{songmid}.m4a`（songmid 拼两遍）。会员曲目返回 `104003`，此时退到
-  128kbps mp3 再试一次，仍拿不到就提示用户。
+  取流固定 `guid=10000`，`filename` 必须写成「前缀 + songmid + songmid + 后缀」（songmid
+  要拼两遍），前缀决定档位：`M800` = 320kbps mp3、`C400` = m4a。匿名时 `uin` 传 `0`，
+  只有 `pay_play=0` 的免费曲目能拿到地址，会员曲目一律返回 `104003`；填入
+  `qqmusic_cookie` 后改用 Cookie 里的真实 QQ 号（`uin`、`loginUin`、`comm.uin` 三处都要
+  跟着改）并带上 Cookie，会员曲目与 320kbps 档位才会下发。⚠️ **搜索也必须带 Cookie**：
+  QQ音乐对未登录的搜索请求会直接返回空列表。
 - **酷狗**：两条链路。免登录走旧版 CDN `trackercdn.kugou.com/i/v2/`，只校验
   `md5(hash + kgcloudv2)` 签名，不需要登录态也不需要设备指纹。填入 `kugou_cookie` 后先走
   网关 `gateway.kugou.com/v5/url`，它要两个签名：`key` = md5(hash + 盐 + appid + mid +

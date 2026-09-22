@@ -216,19 +216,20 @@ def test_qq_play_url_sends_anonymous_vkey_request(monkeypatch: pytest.MonkeyPatc
     calls: list[dict[str, object]] = []
 
     async def fake_post_json(url: str, data: object, headers: object = None, as_json: bool = False) -> object:
-        calls.append({"url": url, "data": data, "as_json": as_json})
+        calls.append({"url": url, "data": data, "as_json": as_json, "headers": headers})
         return {
             "req_1": {
                 "data": {
                     "sip": ["http://aqqmusic.example/"],
-                    "midurlinfo": [{"purl": "C400abc.m4a?vkey=1"}],
+                    "midurlinfo": [{"purl": "M800abc.mp3?vkey=1"}],
                 }
             }
         }
 
     monkeypatch.setattr(qq_module, "post_json", fake_post_json)
+    monkeypatch.setattr(qq_module.music_config, "get_config", lambda name: SimpleNamespace(data=""))
     song = SongInfo(platform="qq", song_id="0039MnYb0qxYhV", name="晴天", singers="周杰伦")
-    assert asyncio.run(qq_module.QqMusicProvider().play_url(song)) == "http://aqqmusic.example/C400abc.m4a?vkey=1"
+    assert asyncio.run(qq_module.QqMusicProvider().play_url(song)) == "http://aqqmusic.example/M800abc.mp3?vkey=1"
     assert calls[0]["url"] == qq_module.VKEY_URL
     assert calls[0]["as_json"] is True
     data = calls[0]["data"]
@@ -237,14 +238,46 @@ def test_qq_play_url_sends_anonymous_vkey_request(monkeypatch: pytest.MonkeyPatc
     assert isinstance(req, dict)
     param = req["param"]
     assert isinstance(param, dict)
-    assert param["filename"] == ["C4000039MnYb0qxYhV0039MnYb0qxYhV.m4a"]
+    assert param["filename"] == ["M8000039MnYb0qxYhV0039MnYb0qxYhV.mp3"]
     assert param["guid"] == "10000"
     assert param["uin"] == "0"
     assert param["loginflag"] == 1
+    assert data["loginUin"] == "0"
 
 
-def test_qq_play_url_falls_back_to_mp3(monkeypatch: pytest.MonkeyPatch) -> None:
-    """m4a 拿不到时（会员曲目返回 104003）要退到 128kbps mp3。"""
+def test_qq_play_url_uses_cookie_uin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """填了 Cookie 时要改用真实 QQ 号并带上登录态，否则会员曲目一律 104003。"""
+    calls: list[dict[str, object]] = []
+
+    async def fake_post_json(url: str, data: object, headers: object = None, as_json: bool = False) -> object:
+        calls.append({"data": data, "headers": headers})
+        return {
+            "req_1": {
+                "data": {
+                    "sip": ["http://aqqmusic.example/"],
+                    "midurlinfo": [{"purl": "M800vip.mp3?vkey=9"}],
+                }
+            }
+        }
+
+    cookie = "pgv_pvid=1; uin=675457315; qm_keyst=Q_H_L_xxx; qqmusic_key=Q_H_L_xxx"
+    monkeypatch.setattr(qq_module, "post_json", fake_post_json)
+    monkeypatch.setattr(qq_module.music_config, "get_config", lambda name: SimpleNamespace(data=cookie))
+    song = SongInfo(platform="qq", song_id="0039MnYb0qxYhV", name="晴天", singers="周杰伦")
+    assert asyncio.run(qq_module.QqMusicProvider().play_url(song)) == "http://aqqmusic.example/M800vip.mp3?vkey=9"
+    data = calls[0]["data"]
+    assert isinstance(data, dict)
+    param = data["req_1"]["param"]  # type: ignore[index]
+    assert param["uin"] == "675457315"
+    assert data["loginUin"] == "675457315"
+    assert data["comm"]["uin"] == "675457315"  # type: ignore[index]
+    headers = calls[0]["headers"]
+    assert isinstance(headers, dict)
+    assert headers["Cookie"] == cookie
+
+
+def test_qq_play_url_falls_back_to_lower_tier(monkeypatch: pytest.MonkeyPatch) -> None:
+    """320kbps 拿不到时（免费曲目返回 104003）要退到 m4a。"""
     tried: list[str] = []
 
     async def fake_post_json(url: str, data: object, headers: object = None, as_json: bool = False) -> object:
@@ -256,13 +289,14 @@ def test_qq_play_url_falls_back_to_mp3(monkeypatch: pytest.MonkeyPatch) -> None:
         name = param["filename"][0]
         assert isinstance(name, str)
         tried.append(name.rsplit(".", 1)[-1])
-        purl = "" if name.endswith(".m4a") else "M500abc.mp3"
+        purl = "" if name.endswith(".mp3") else "C400abc.m4a"
         return {"req_1": {"data": {"sip": ["http://s.example/"], "midurlinfo": [{"purl": purl, "result": 104003}]}}}
 
     monkeypatch.setattr(qq_module, "post_json", fake_post_json)
+    monkeypatch.setattr(qq_module.music_config, "get_config", lambda name: SimpleNamespace(data=""))
     song = SongInfo(platform="qq", song_id="MID", name="n", singers="s")
-    assert asyncio.run(qq_module.QqMusicProvider().play_url(song)) == "http://s.example/M500abc.mp3"
-    assert tried == ["m4a", "mp3"]
+    assert asyncio.run(qq_module.QqMusicProvider().play_url(song)) == "http://s.example/C400abc.m4a"
+    assert tried == ["mp3", "m4a"]
 
 
 def test_get_provider_falls_back_to_default() -> None:

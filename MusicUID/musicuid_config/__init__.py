@@ -21,6 +21,14 @@ CONFIG_DEFAULT: Dict[str, GSC] = {
         "",
         secret=True,
     ),
+    "qqmusic_cookie": GsStrConfig(
+        "QQ音乐 Cookie",
+        "填入浏览器 y.qq.com 的完整 Cookie 后，会员曲目与 320kbps 档位才可播放；留空只能播放免费曲目。"
+        "Cookie 必须含 uin 与 qm_keyst 两个字段。"
+        "获取方式：浏览器登录 y.qq.com → F12 → Application → Cookies → 复制整条 Cookie",
+        "",
+        secret=True,
+    ),
     "kugou_cookie": GsStrConfig(
         "酷狗 Cookie",
         "填入浏览器酷狗网页版的完整 Cookie 后，需要单独购买专辑的曲目（周杰伦等原唱）可播放 60 秒试听片段，"
