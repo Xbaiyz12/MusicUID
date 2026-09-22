@@ -16,6 +16,10 @@ from ...musicuid_config import music_config
 # 仅 mobiles.kugou.com 的证书与域名匹配，mobilecdn / msearchcdn 均报 Hostname mismatch
 SEARCH_URL: Final[str] = "https://mobiles.kugou.com/api/v3/search/song"
 
+# 分享链接解析：这个老接口接受裸 hash，返回歌名/歌手与实际可用的 hash
+DETAIL_URL: Final[str] = "http://m.kugou.com/app/i/getSongInfo.php"
+HEADERS: Final[dict[str, str]] = {"Referer": "https://m.kugou.com/"}
+
 # 匿名取流：旧版 CDN 只校验 md5(hash + 固定盐) 签名，不需要登录态与设备指纹
 CDN_URL: Final[str] = "http://trackercdn.kugou.com/i/v2/"
 CDN_SALT: Final[str] = "kgcloudv2"
@@ -86,15 +90,38 @@ class KugouProvider:
         return songs
 
     async def detail(self, song_id: str) -> SongInfo | None:
-        """Return ``None``: 酷狗分享链接解析尚未接入。
+        """Fetch one song by its file hash.
+
+        分享链接直接带 ``hash``，但服务端可能把它换成另一个等价 hash：``req_hash`` 是请求
+        值，``hash`` 才是实际可用值，取流必须用返回的那个。这个老接口不返回专辑名，时长也
+        恒为 0，所以这两项留空。
 
         Args:
-            song_id: 酷狗 song hash.
+            song_id: 酷狗 song hash taken from the share link.
 
         Returns:
-            Always ``None``.
+            The song, or ``None`` when the hash cannot be resolved.
+
+        Raises:
+            MusicRequestError: The platform request failed.
         """
-        return None
+        payload = await get_json(
+            DETAIL_URL,
+            params={"cmd": "playInfo", "hash": song_id},
+            headers=HEADERS,
+        )
+        item = to_obj(payload)
+        name = get_str(item, "songName")
+        if not name:
+            return None
+        return SongInfo(
+            platform=self.platform,
+            song_id=get_str(item, "hash") or song_id,
+            name=name,
+            singers=get_str(item, "author_name") or "未知歌手",
+            duration_sec=get_int(item, "timeLength"),
+            cover_url=get_str(item, "album_img").replace("{size}", "480"),
+        )
 
     async def collection(self, kind: str, collection_id: str) -> SongCollection | None:
         """Return ``None``: 酷狗歌单/专辑链接解析尚未接入。

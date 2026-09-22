@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from gsuid_core.models import Event
+from MusicUID.MusicUID import musicuid_resolve as resolve_module
 from MusicUID.MusicUID.utils.render import _env, close_browser
 from MusicUID.MusicUID.musicuid_play import session as session_module, parse_platform, default_platform
 from MusicUID.MusicUID.utils.delivery import ILLEGAL_NAME_CHARS, voice_segment, _safe_file_name
@@ -27,7 +28,9 @@ from MusicUID.MusicUID.utils.provider import (
 from MusicUID.MusicUID.musicuid_resolve import (
     URL_RE,
     QQ_SONGID_RE,
+    KUGOU_HASH_RE,
     QQ_SONGMID_RE,
+    KUGOU_CHAIN_RE,
     NETEASE_SONG_RE,
     NETEASE_COLLECTION_RE,
 )
@@ -544,6 +547,58 @@ def test_qq_card_jump_url_from_real_payload() -> None:
     song = QQ_SONGID_RE.search(url_match.group(0)) or QQ_SONGMID_RE.search(url_match.group(0))
     assert song is not None
     assert song.group(1) == "000cflsu1FG3rW"
+
+
+def test_kugou_card_link_carries_hash() -> None:
+    """酷狗卡片/长链直接带 32 位 hash，它就是取流用的 song_id。"""
+    card = (
+        "[卡片消息] 图文H5\n摘要: [分享]烟火\ntag: 酷狗音乐\n"
+        "jump_url: https://m.kugou.com/share/?h1=136207460293682183381058566546195238363&h2=-&action=single"
+        "&hash=12a52a850fac1b49cc1ad255cfbe4404&chl=qq_client&album_id=78493803\n"
+    )
+    url_match = URL_RE.search(card)
+    assert url_match is not None
+    match = KUGOU_HASH_RE.search(url_match.group(0))
+    assert match is not None
+    assert match.group(1) == "12a52a850fac1b49cc1ad255cfbe4404"
+
+
+def test_kugou_plain_share_link_only_has_chain() -> None:
+    """App 分享的纯链接只带 chain，没有 hash——这正是之前识别不到的原因。"""
+    text = "分享h3R3刘清云的单曲《烟火》https://m.kugou.com/share/song.html?chain=5mx6L78G5V2 （@酷狗音乐）"
+    url_match = URL_RE.search(text)
+    assert url_match is not None
+    url = url_match.group(0)
+    assert KUGOU_HASH_RE.search(url) is None
+    match = KUGOU_CHAIN_RE.search(url)
+    assert match is not None
+    assert match.group(1) == "5mx6L78G5V2"
+
+
+def test_kugou_hash_and_chain_do_not_cross_match() -> None:
+    card = "https://m.kugou.com/share/?action=single&hash=12a52a850fac1b49cc1ad255cfbe4404&album_id=78493803"
+    chain = "https://m.kugou.com/share/song.html?chain=5mx6L78G5V2"
+    assert KUGOU_CHAIN_RE.search(card) is None
+    assert KUGOU_HASH_RE.search(chain) is None
+
+
+def test_resolve_kugou_chain_extracts_first_hash(monkeypatch: pytest.MonkeyPatch) -> None:
+    """chain 页面内嵌 JSON 里可能有两个 hash，取先出现的那个（detail 会再做规范化）。"""
+    html = '{"data":{"hash":"12a52a850fac1b49cc1ad255cfbe4404","other":{"hash":"8317E1B4A7B76666B3110D3363AE0D08"}}}'
+
+    async def fake_get_text(url: str, params: object = None, headers: object = None) -> str:
+        return html
+
+    monkeypatch.setattr(resolve_module, "get_text", fake_get_text)
+    assert asyncio.run(resolve_module.resolve_kugou_chain("5mx6L78G5V2")) == "12a52a850fac1b49cc1ad255cfbe4404"
+
+
+def test_resolve_kugou_chain_returns_empty_without_hash(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_get_text(url: str, params: object = None, headers: object = None) -> str:
+        return "<html>nothing here</html>"
+
+    monkeypatch.setattr(resolve_module, "get_text", fake_get_text)
+    assert asyncio.run(resolve_module.resolve_kugou_chain("x")) == ""
 
 
 def test_parse_song_reads_full_field_names() -> None:
