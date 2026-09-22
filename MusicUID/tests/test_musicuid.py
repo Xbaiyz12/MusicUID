@@ -220,6 +220,40 @@ def test_kugou_play_url_falls_back_when_gateway_refuses(monkeypatch: pytest.Monk
     assert urls == [kugou_module.GATEWAY_URL, kugou_module.CDN_URL]
 
 
+def test_kugou_search_marks_paid_tracks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """酷狗 privilege > 0 表示需要会员或单独购买专辑，必须标进 payplay 供提示区分。"""
+    payload = {
+        "data": {
+            "info": [
+                {"hash": "A" * 32, "songname": "烟火", "singername": "h3R3刘清云", "privilege": 10},
+                {"hash": "B" * 32, "songname": "晴天", "singername": "蓝心羽", "privilege": 0},
+            ]
+        }
+    }
+
+    async def fake_get_json(url: str, params: object = None, headers: object = None) -> object:
+        return payload
+
+    monkeypatch.setattr(kugou_module, "get_json", fake_get_json)
+    songs = asyncio.run(kugou_module.KugouProvider().search("烟火", 5))
+    assert [song.payplay for song in songs] == [True, False]
+
+
+def test_kugou_detail_marks_paid_track(monkeypatch: pytest.MonkeyPatch) -> None:
+    """分享链接解析出的歌曲同样要带付费标记。"""
+    payload = {"songName": "烟火", "author_name": "h3R3刘清云", "hash": "C" * 32, "privilege": "10"}
+
+    async def fake_get_json(url: str, params: object = None, headers: object = None) -> object:
+        return payload
+
+    monkeypatch.setattr(kugou_module, "get_json", fake_get_json)
+    song = asyncio.run(kugou_module.KugouProvider().detail("D" * 32))
+    assert song is not None
+    assert song.name == "烟火"
+    assert song.song_id == "C" * 32
+    assert song.payplay is True
+
+
 def test_qq_play_url_sends_anonymous_vkey_request(monkeypatch: pytest.MonkeyPatch) -> None:
     """匿名取流固定 guid=10000 / uin=0，filename 里的 songmid 要拼两遍。"""
     calls: list[dict[str, object]] = []

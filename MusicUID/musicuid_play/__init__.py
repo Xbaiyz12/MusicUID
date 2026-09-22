@@ -112,7 +112,10 @@ async def play_song(bot: Bot, song: SongInfo) -> None:
         await bot.send(f"获取播放地址失败：{e}")
         return
     if not audio_url:
-        await bot.send(f"《{song.name}》无法播放：可能无版权、需要 VIP 或该音质不可用")
+        if song.payplay:
+            await bot.send(f"《{song.name}》需要 {provider.display_name} 会员或购买该专辑才能播放")
+        else:
+            await bot.send(f"《{song.name}》暂时取不到音源：可能已下架或版权受限")
         return
 
     header = f"🎵 {song.name} - {song.singers}"

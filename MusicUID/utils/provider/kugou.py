@@ -85,6 +85,8 @@ class KugouProvider:
                     singers=get_str(item, "singername") or "未知歌手",
                     album=get_str(item, "album_name"),
                     duration_sec=get_int(item, "duration"),
+                    # privilege > 0 表示需要会员或单独购买专辑（周杰伦、烟火这类原唱）
+                    payplay=get_int(item, "privilege") > 0,
                 )
             )
         return songs
@@ -121,6 +123,7 @@ class KugouProvider:
             singers=get_str(item, "author_name") or "未知歌手",
             duration_sec=get_int(item, "timeLength"),
             cover_url=get_str(item, "album_img").replace("{size}", "480"),
+            payplay=get_int(item, "privilege") > 0,
         )
 
     async def collection(self, kind: str, collection_id: str) -> SongCollection | None:
