@@ -96,7 +96,7 @@ def plain_song_list(keyword: str, results: list[PlatformResult], play_hint: str)
     if playable_names:
         lines.append(f"\n发送「{play_hint}」播放第 N 首（编号全平台连续，当前可播放：{'、'.join(playable_names)}）")
     else:
-        lines.append("\n当前列出的平台都只提供搜索与信息展示")
+        lines.append("\n当前列出的平台暂时都取不到音源")
     return "\n".join(lines)
 
 
@@ -146,7 +146,7 @@ async def send_song_list(
                 f"当前可播放：{'、'.join(playable_names)}），列表 10 分钟内有效"
             )
         else:
-            tip = "当前列出的平台都只提供搜索与信息展示"
+            tip = "当前列出的平台暂时都取不到音源"
         data: dict[str, object] = {
             "theme": results[0].platform if single else MULTI_THEME,
             "eyebrow": f"{results[0].display_name} · SEARCH" if single else "全平台 · SEARCH",
