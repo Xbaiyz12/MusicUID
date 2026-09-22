@@ -1,0 +1,14 @@
+{
+  "include": ["MusicUID"],
+  "exclude": ["**/__pycache__", ".venv", ".ruff_cache"],
+  "typeCheckingMode": "basic",
+  "venvPath": "D:/gsuid_core",
+  "venv": ".venv",
+  "extraPaths": [
+    ".",
+    "..",
+    "../../..",
+    "../../../gsuid_core"
+  ],
+  "reportMissingImports": true
+}

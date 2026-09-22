@@ -1,0 +1,19 @@
+[project]
+name = "MusicUID"
+version = "0.1.0"
+description = "多平台点歌插件（网易云 / QQ音乐 / 酷狗）for GsCore"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11,<4.0"
+dependencies = [
+    "httpx>=0.27.0",
+    "playwright>=1.49.0",
+    "pycryptodome>=3.20.0",
+]
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[tool.pdm]
+distribution = false

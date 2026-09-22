@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>点歌结果</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: fit-content;
+      height: fit-content;
+      background: #f6f6f8 !important;
+      font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+      color: #2b2b33;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: geometricPrecision;
+    }
+
+    /* hero 主题：单平台用该平台色，多平台用中性紫 */
+    body.multi   { --c1: #7b6ce0; --c2: #4c3fa8; --c: #6b5bd2; --soft: #efedfd; }
+    body.netease { --c1: #f0605a; --c2: #d63333; --c: #ec4141; --soft: #fdeeee; }
+    body.qq      { --c1: #3fd18d; --c2: #189c5c; --c: #31c27c; --soft: #e9f9f1; }
+    body.kugou   { --c1: #5cb9f8; --c2: #1c7fce; --c: #2ca2f9; --soft: #e8f4fd; }
+
+    /* 分组内各平台自己的强调色 */
+    .grp.p-netease { --gc: #ec4141; --gsoft: #fdeeee; --gline: rgba(236, 65, 65, 0.18); }
+    .grp.p-qq      { --gc: #31c27c; --gsoft: #e9f9f1; --gline: rgba(49, 194, 124, 0.22); }
+    .grp.p-kugou   { --gc: #2ca2f9; --gsoft: #e8f4fd; --gline: rgba(44, 162, 249, 0.22); }
+
+    .page { display: block; width: fit-content; padding: 16px; background: #f6f6f8; }
+
+    .card {
+      width: 560px;
+      border-radius: 26px;
+      overflow: hidden;
+      background: #fff;
+      border: 1px solid rgba(0, 0, 0, 0.06);
+      box-shadow: 0 14px 28px rgba(20, 20, 40, 0.1);
+    }
+
+    .hero {
+      padding: 24px 24px 20px;
+      color: #fff;
+      background:
+        radial-gradient(circle at 88% 16%, rgba(255, 255, 255, 0.26) 0%, transparent 44%),
+        linear-gradient(135deg, var(--c1) 0%, var(--c2) 100%);
+    }
+
+    .hero-top { display: flex; align-items: flex-start; gap: 14px; }
+
+    .brand {
+      width: 46px;
+      height: 46px;
+      border-radius: 15px;
+      background: rgba(255, 255, 255, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.34);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 23px;
+      flex-shrink: 0;
+    }
+
+    .hero-text { flex: 1; min-width: 0; }
+
+    .eyebrow { font-size: 11px; font-weight: 700; letter-spacing: 2.4px; opacity: 0.86; }
+
+    .title {
+      margin-top: 6px;
+      font-size: 25px;
+      font-weight: 800;
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 330px;
+    }
+
+    .subtitle { margin-top: 6px; font-size: 13px; opacity: 0.92; }
+
+    .pill {
+      flex-shrink: 0;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.18);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .body { padding: 16px 16px 12px; }
+
+    .grp { margin-bottom: 14px; }
+    .grp:last-of-type { margin-bottom: 6px; }
+
+    .grp-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 4px 8px;
+    }
+
+    .grp-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--gc, #888);
+      box-shadow: 0 0 0 3px var(--gsoft, rgba(0, 0, 0, 0.05));
+    }
+
+    .grp-name { font-size: 13.5px; font-weight: 800; color: var(--gc, #333); letter-spacing: 0.3px; }
+
+    .grp-count {
+      margin-left: auto;
+      font-size: 10.5px;
+      font-weight: 700;
+      color: var(--gc, #666);
+      background: var(--gsoft, #f2f2f2);
+      border: 1px solid var(--gline, rgba(0, 0, 0, 0.06));
+      padding: 2px 8px;
+      border-radius: 999px;
+    }
+
+    .song {
+      display: grid;
+      grid-template-columns: 34px 46px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 13px;
+      border-radius: 14px;
+      background: linear-gradient(165deg, #ffffff 0%, #fbfbfd 100%);
+      border: 1px solid rgba(0, 0, 0, 0.06);
+      margin-bottom: 7px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .song::before {
+      content: "";
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 3px;
+      background: var(--gc, #999);
+      opacity: 0.85;
+    }
+
+    .idx {
+      font-size: 15px;
+      font-weight: 800;
+      color: var(--gc, #666);
+      text-align: center;
+      font-family: "Cascadia Code", "Consolas", monospace;
+    }
+
+    .cover {
+      width: 46px;
+      height: 46px;
+      border-radius: 11px;
+      object-fit: cover;
+      display: block;
+      background: var(--gsoft, #f5f5f5);
+    }
+
+    .cover-ph {
+      width: 46px;
+      height: 46px;
+      border-radius: 11px;
+      background: var(--gsoft, #f5f5f5);
+      color: var(--gc, #999);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 19px;
+      font-weight: 800;
+    }
+
+    .meta { min-width: 0; }
+
+    .name {
+      font-size: 14px;
+      font-weight: 800;
+      line-height: 1.3;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .singer {
+      margin-top: 3px;
+      font-size: 11.5px;
+      color: #85858f;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+
+    .duration {
+      font-size: 11.5px;
+      font-weight: 700;
+      color: #85858f;
+      font-family: "Cascadia Code", "Consolas", monospace;
+    }
+
+    .tag {
+      font-size: 9.5px;
+      font-weight: 800;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: var(--gsoft, #f2f2f2);
+      color: var(--gc, #666);
+      letter-spacing: 0.3px;
+    }
+
+    .tag.paid { background: #fdf3e0; color: #d99a2b; }
+
+    .grp-empty {
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: #fafafc;
+      border: 1px dashed rgba(0, 0, 0, 0.1);
+      font-size: 11.5px;
+      color: #9a9aa4;
+    }
+
+    .tip {
+      margin-top: 6px;
+      padding: 11px 13px;
+      border-radius: 14px;
+      background: var(--soft);
+      font-size: 11.5px;
+      color: #6d6d78;
+      line-height: 1.6;
+    }
+
+    .tip b { color: var(--c); }
+
+    .footer {
+      margin-top: 10px;
+      padding: 2px 4px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 10.5px;
+      color: #9a9aa4;
+    }
+
+    .footer .brand-name { color: var(--c); font-weight: 700; }
+  </style>
+</head>
+<body class="{{ data.theme }}">
+  <div class="page">
+    <div class="card">
+      <div class="hero">
+        <div class="hero-top">
+          <div class="brand">♪</div>
+          <div class="hero-text">
+            <div class="eyebrow">{{ data.eyebrow }}</div>
+            <div class="title">{{ data.keyword or '点歌结果' }}</div>
+            <div class="subtitle">{{ data.subtitle }}</div>
+          </div>
+          <div class="pill">{{ data.total }} 首</div>
+        </div>
+      </div>
+
+      <div class="body">
+        {% for group in data.groups %}
+        <div class="grp p-{{ group.platform }}">
+          <div class="grp-head">
+            <div class="grp-dot"></div>
+            <div class="grp-name">{{ group.platform_name }}</div>
+            <div class="grp-count">{{ group.songs|length }} 首{% if not group.playable %} · 仅展示{% endif %}</div>
+          </div>
+          {% if group.songs %}
+            {% for song in group.songs %}
+            <div class="song">
+              <div class="idx">{{ song.index }}</div>
+              {% if song.cover %}
+              <img class="cover" src="{{ song.cover }}" referrerpolicy="no-referrer" />
+              {% else %}
+              <div class="cover-ph">♪</div>
+              {% endif %}
+              <div class="meta">
+                <div class="name">{{ song.songName }}</div>
+                <div class="singer">{{ song.singerName }}{% if song.albumName %} · {{ song.albumName }}{% endif %}</div>
+              </div>
+              <div class="right">
+                <div class="duration">{{ song.duration }}</div>
+                <div class="tag{% if song.payplay %} paid{% endif %}">{{ 'VIP' if song.payplay else '免费' }}</div>
+              </div>
+            </div>
+            {% endfor %}
+          {% else %}
+            <div class="grp-empty">{{ group.empty_text }}</div>
+          {% endif %}
+        </div>
+        {% endfor %}
+
+        <div class="tip">{{ data.tip }}</div>
+
+        <div class="footer">
+          <div>{{ data.footer_left }}</div>
+          <div class="brand-name">MusicUID</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
