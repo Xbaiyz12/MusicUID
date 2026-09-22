@@ -24,7 +24,13 @@ from MusicUID.MusicUID.utils.provider import (
     get_provider,
     resolve_platform,
 )
-from MusicUID.MusicUID.musicuid_resolve import URL_RE, SONG_ID_RE, COLLECTION_RE
+from MusicUID.MusicUID.musicuid_resolve import (
+    URL_RE,
+    QQ_SONGID_RE,
+    QQ_SONGMID_RE,
+    NETEASE_SONG_RE,
+    NETEASE_COLLECTION_RE,
+)
 from MusicUID.MusicUID.utils.json_tools import (
     get_id,
     to_obj,
@@ -467,7 +473,7 @@ def test_group_sessions_are_isolated() -> None:
     ],
 )
 def test_song_id_pattern(url: str, expected_id: str) -> None:
-    match = SONG_ID_RE.search(url)
+    match = NETEASE_SONG_RE.search(url)
     assert match is not None
     assert match.group(1) == expected_id
 
@@ -481,11 +487,33 @@ def test_song_id_pattern(url: str, expected_id: str) -> None:
     ],
 )
 def test_collection_pattern_captures_kind_and_id(url: str, expected_kind: str, expected_id: str) -> None:
-    assert SONG_ID_RE.search(url) is None
-    match = COLLECTION_RE.search(url)
+    assert NETEASE_SONG_RE.search(url) is None
+    match = NETEASE_COLLECTION_RE.search(url)
     assert match is not None
     assert match.group(1) == expected_kind
     assert match.group(2) == expected_id
+
+
+@pytest.mark.parametrize(
+    ("url", "expected_id"),
+    [
+        ("https://i.y.qq.com/v8/playsong.html?songid=726576025#webchat_redirect", "726576025"),
+        ("https://i.y.qq.com/v8/playsong.html?songid=123&ADTAG=wechat", "123"),
+        ("https://y.qq.com/n/ryqq/songDetail/0039MnYb0qxYhV", "0039MnYb0qxYhV"),
+    ],
+)
+def test_qq_share_link_patterns(url: str, expected_id: str) -> None:
+    """QQ音乐两种分享格式都要能取出 id（数字 songid / songDetail 的 songmid）。"""
+    match = QQ_SONGID_RE.search(url) or QQ_SONGMID_RE.search(url)
+    assert match is not None
+    assert match.group(1) == expected_id
+
+
+def test_qq_patterns_ignore_netease_url() -> None:
+    """网易云链接不能被 QQ音乐的正则误吃。"""
+    netease = "https://music.163.com/song?id=186016"
+    assert QQ_SONGID_RE.search(netease) is None
+    assert QQ_SONGMID_RE.search(netease) is None
 
 
 def test_parse_song_reads_full_field_names() -> None:

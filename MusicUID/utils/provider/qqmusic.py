@@ -1,4 +1,4 @@
-"""QQ Music provider: public search plus anonymous / logged-in url resolution."""
+"""QQ Music provider: public search, share-link detail and url resolution."""
 
 import re
 from typing import Final
@@ -11,6 +11,7 @@ from ..json_tools import to_obj, get_int, get_obj, get_str, get_list, join_names
 from ...musicuid_config import music_config
 
 SEARCH_URL: Final[str] = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp"
+DETAIL_URL: Final[str] = "https://c.y.qq.com/v8/fcg-bin/fcg_play_single_song.fcg"
 VKEY_URL: Final[str] = "https://u.y.qq.com/cgi-bin/musicu.fcg"
 COVER_URL: Final[str] = "https://y.qq.com/music/photo_new/T002R300x300M000{}.jpg"
 HEADERS: Final[dict[str, str]] = {"Referer": "https://y.qq.com/portal/player.html"}
@@ -22,8 +23,24 @@ QUALITY_TIERS: Final[tuple[tuple[str, str], ...]] = (("M800", "mp3"), ("C400", "
 LOGIN_REQUIRED: Final[int] = 104003
 
 
+def _cookie_headers() -> dict[str, str]:
+    """Build request headers, attaching the login cookie when configured.
+
+    QQ音乐对未登录请求很苛刻：搜索会直接返回空列表，取流一律回 ``104003``，
+    所以三个接口都走这里拿头部。
+
+    Returns:
+        Header dictionary with ``Referer`` and, when available, ``Cookie``.
+    """
+    headers = dict(HEADERS)
+    cookie = music_config.get_config("qqmusic_cookie").data
+    if cookie:
+        headers["Cookie"] = cookie
+    return headers
+
+
 class QqMusicProvider:
-    """QQ音乐：搜索接口 + 匿名 / 登录两条取流路径。"""
+    """QQ音乐：搜索 / 分享链接详情 / 匿名与登录两条取流路径。"""
 
     platform = "qq"
     display_name = "QQ音乐"
@@ -45,10 +62,6 @@ class QqMusicProvider:
         Raises:
             MusicRequestError: The platform request failed.
         """
-        headers = dict(HEADERS)
-        cookie = music_config.get_config("qqmusic_cookie").data
-        if cookie:
-            headers["Cookie"] = cookie
         payload = await get_json(
             SEARCH_URL,
             params={
@@ -63,7 +76,7 @@ class QqMusicProvider:
                 "platform": "yqq.json",
                 "needNewCode": 0,
             },
-            headers=headers,
+            headers=_cookie_headers(),
         )
         song_node = get_obj(get_obj(to_obj(payload), "data"), "song")
         songs: list[SongInfo] = []
@@ -88,14 +101,45 @@ class QqMusicProvider:
         return songs
 
     async def detail(self, song_id: str) -> SongInfo | None:
-        """Return ``None``: QQ音乐分享链接解析尚未接入。
+        """Fetch one song by its numeric songid or its songmid.
+
+        分享链接给的是数字 songid（``playsong.html?songid=...``），而取流要 songmid，
+        所以统一经这个接口换一次；两种参数它都认。返回的 ``mid`` 就是 songmid。
 
         Args:
-            song_id: QQ音乐 songmid.
+            song_id: QQ音乐数字 songid，或 ``songDetail/{songmid}`` 里的 songmid.
 
         Returns:
-            Always ``None``.
+            The song, or ``None`` when the id cannot be resolved.
+
+        Raises:
+            MusicRequestError: The platform request failed.
         """
+        params: dict[str, str | int] = {
+            "format": "json",
+            "platform": "yqq",
+            "inCharset": "utf8",
+            "outCharset": "utf-8",
+        }
+        params["songid" if song_id.isdigit() else "songmid"] = song_id
+        payload = await get_json(DETAIL_URL, params=params, headers=_cookie_headers())
+        for raw in get_list(to_obj(payload), "data"):
+            item = to_obj(raw)
+            song_mid = get_str(item, "mid")
+            if not song_mid:
+                continue
+            album = get_obj(item, "album")
+            album_mid = get_str(album, "mid")
+            return SongInfo(
+                platform=self.platform,
+                song_id=song_mid,
+                name=get_str(item, "name", "未知歌曲"),
+                singers=join_names(item.get("singer")) or "未知歌手",
+                album=get_str(album, "name"),
+                duration_sec=get_int(item, "interval"),
+                cover_url=COVER_URL.format(album_mid) if album_mid else "",
+                payplay=get_int(get_obj(item, "pay"), "pay_play") > 0,
+            )
         return None
 
     async def collection(self, kind: str, collection_id: str) -> SongCollection | None:
@@ -126,7 +170,7 @@ class QqMusicProvider:
 
         取流固定 ``guid=10000``，且 ``filename`` 必须写成「前缀 + songmid + songmid +
         后缀」——songmid 要拼两遍。匿名时 ``uin`` 传 ``0``，只有 ``pay_play`` 为 0 的
-        免费曲目能拿到地址（会员曲目一律返回 :data:`LOGIN_REQUIRED`）；填入
+        免费曲目能拿到地址（会员曲目一律返回 :data:`LOGIN_REQUIRED`）；填了
         ``qqmusic_cookie`` 后改用 Cookie 里的真实 QQ 号并带上登录态，会员曲目与 320kbps
         档位才会下发。
 
@@ -139,11 +183,10 @@ class QqMusicProvider:
         Raises:
             MusicRequestError: The platform request failed.
         """
-        headers = dict(HEADERS)
-        cookie = music_config.get_config("qqmusic_cookie").data
+        headers = _cookie_headers()
+        cookie = headers.get("Cookie", "")
         uin = "0"
         if cookie:
-            headers["Cookie"] = cookie
             match = re.search(r"(?:^|;\s*)uin=([^;]*)", cookie)
             if match:
                 uin = match.group(1)
