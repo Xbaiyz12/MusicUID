@@ -22,9 +22,10 @@ URL_RE = re.compile(r"https?://[\w\-./?=&%#:@+~]+")
 # 网易云：单曲 song?id= / 歌单 playlist?id= / 专辑 album?id=
 NETEASE_SONG_RE = re.compile(r"song\?id=(\d+)")
 NETEASE_COLLECTION_RE = re.compile(r"(playlist|album)\?id=(\d+)")
-# QQ音乐：playsong.html?songid= 给数字 id，songDetail/{mid} 给 songmid
+# QQ音乐三种分享形态：playsong.html?songid= 给数字 id；App 卡片 jump_url 给 ?songmid=；
+# 网页版给 songDetail/{mid}。三个都要认，且 songid 与 songmid 不能互相误匹配。
 QQ_SONGID_RE = re.compile(r"[?&]songid=(\d+)")
-QQ_SONGMID_RE = re.compile(r"songDetail/([0-9A-Za-z]+)")
+QQ_SONGMID_RE = re.compile(r"(?:[?&]songmid=|songDetail/)([0-9A-Za-z]+)")
 # 需要先跟随 302 才能拿到真实链接的短链域名
 SHORT_HOSTS = ("163cn.tv", "c6.y.qq.com")
 

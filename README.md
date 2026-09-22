@@ -41,8 +41,13 @@
 
 **QQ音乐**（`y.qq.com` 各子域，含 `c6.y.qq.com` 短链）：
 
-- **单曲** `i.y.qq.com/v8/playsong.html?songid=...`（数字 id）或 `y.qq.com/n/ryqq/songDetail/{songmid}` → 拉详情并直接播放
+- **单曲**三种形态都认：`playsong.html?songid=...`（数字 id）、App 分享卡片的
+  `playsong.html?...&songmid=...`、网页版 `songDetail/{songmid}` → 拉详情并直接播放
 - 歌单 / 专辑暂未接入
+
+**QQ 分享卡片**同样能解析：官机适配器会把卡片正文（含 `jump_url`）拼进消息文本，链接照常被
+抓取。注意第三方协议（OneBot / NoneBot2 系）**收不到**腾讯的富媒体卡片消息——这是平台限制，
+只能用官机渠道。
 
 ## 配置
 

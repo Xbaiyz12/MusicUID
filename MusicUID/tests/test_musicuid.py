@@ -500,10 +500,16 @@ def test_collection_pattern_captures_kind_and_id(url: str, expected_kind: str, e
         ("https://i.y.qq.com/v8/playsong.html?songid=726576025#webchat_redirect", "726576025"),
         ("https://i.y.qq.com/v8/playsong.html?songid=123&ADTAG=wechat", "123"),
         ("https://y.qq.com/n/ryqq/songDetail/0039MnYb0qxYhV", "0039MnYb0qxYhV"),
+        # App 分享卡片的 jump_url 用的是 songmid 参数（20:37 那条真实卡片）
+        (
+            "https://i.y.qq.com/v8/playsong.html?platform=11&appshare=android_qq&appversion=20080508"
+            "&hosteuin=null&songmid=000cflsu1FG3rW&type=0&appsongtype=1&_wv=1&source=qq&ADTAG=qfshare",
+            "000cflsu1FG3rW",
+        ),
     ],
 )
 def test_qq_share_link_patterns(url: str, expected_id: str) -> None:
-    """QQ音乐两种分享格式都要能取出 id（数字 songid / songDetail 的 songmid）。"""
+    """QQ音乐三种分享格式都要能取出 id（songid / songmid 参数 / songDetail 路径）。"""
     match = QQ_SONGID_RE.search(url) or QQ_SONGMID_RE.search(url)
     assert match is not None
     assert match.group(1) == expected_id
@@ -514,6 +520,30 @@ def test_qq_patterns_ignore_netease_url() -> None:
     netease = "https://music.163.com/song?id=186016"
     assert QQ_SONGID_RE.search(netease) is None
     assert QQ_SONGMID_RE.search(netease) is None
+
+
+def test_qq_songid_and_songmid_do_not_cross_match() -> None:
+    """songid 与 songmid 只差一个字母，两个正则不能互相误匹配。"""
+    mid_url = "https://i.y.qq.com/v8/playsong.html?songmid=000cflsu1FG3rW"
+    id_url = "https://i.y.qq.com/v8/playsong.html?songid=726576025"
+    assert QQ_SONGID_RE.search(mid_url) is None
+    assert QQ_SONGMID_RE.search(mid_url) is not None
+    assert QQ_SONGMID_RE.search(id_url) is None
+
+
+def test_qq_card_jump_url_from_real_payload() -> None:
+    """真实卡片正文（官机把 jump_url 拼进 raw_text）要被完整解析出来。"""
+    card = (
+        "[卡片消息] 图文H5\n摘要: [分享]雨爱\ntitle: 雨爱\ndesc: 杨丞琳\n"
+        "jump_url: https://i.y.qq.com/v8/playsong.html?platform=11&appshare=android_qq&appversion=20080508"
+        "&hosteuin=null&songmid=000cflsu1FG3rW&type=0&appsongtype=1&_wv=1&source=qq&ADTAG=qfshare\n"
+        "tag: QQ音乐"
+    )
+    url_match = URL_RE.search(card)
+    assert url_match is not None
+    song = QQ_SONGID_RE.search(url_match.group(0)) or QQ_SONGMID_RE.search(url_match.group(0))
+    assert song is not None
+    assert song.group(1) == "000cflsu1FG3rW"
 
 
 def test_parse_song_reads_full_field_names() -> None:
