@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -118,6 +119,7 @@ def test_kugou_play_url_signs_lowercased_hash(monkeypatch: pytest.MonkeyPatch) -
         return {"status": 1, "url": ["http://fsandroid.example/song.mp3"]}
 
     monkeypatch.setattr(kugou_module, "get_json", fake_get_json)
+    monkeypatch.setattr(kugou_module.music_config, "get_config", lambda name: SimpleNamespace(data=""))
     song = SongInfo(platform="kugou", song_id="3801C2F0", name="晴天", singers="周杰伦")
     assert asyncio.run(kugou_module.KugouProvider().play_url(song)) == "http://fsandroid.example/song.mp3"
     assert captured["url"] == kugou_module.CDN_URL
@@ -132,8 +134,81 @@ def test_kugou_play_url_returns_empty_when_cdn_refuses(monkeypatch: pytest.Monke
         return {"status": 2, "url": []}
 
     monkeypatch.setattr(kugou_module, "get_json", fake_get_json)
+    monkeypatch.setattr(kugou_module.music_config, "get_config", lambda name: SimpleNamespace(data=""))
     song = SongInfo(platform="kugou", song_id="HASH", name="n", singers="s")
     assert asyncio.run(kugou_module.KugouProvider().play_url(song)) == ""
+
+
+def test_kugou_play_url_uses_gateway_with_cookie(monkeypatch: pytest.MonkeyPatch) -> None:
+    """填了 Cookie 时走网关 v5/url：带登录态与 signature，IsFreePart 固定 0。"""
+    calls: list[dict[str, object]] = []
+
+    async def fake_get_json(url: str, params: object = None, headers: object = None) -> object:
+        calls.append({"url": url, "params": params, "headers": headers})
+        return {"status": 1, "url": ["http://fsandroid.example/vip.mp3"]}
+
+    cookie = "kg_mid=abc; t=TOKEN123; KugooID=2039242825; dfid=xyz"
+    monkeypatch.setattr(kugou_module, "get_json", fake_get_json)
+    monkeypatch.setattr(kugou_module.music_config, "get_config", lambda name: SimpleNamespace(data=cookie))
+    song = SongInfo(platform="kugou", song_id="ABC123", name="晴天", singers="周杰伦")
+    assert asyncio.run(kugou_module.KugouProvider().play_url(song)) == "http://fsandroid.example/vip.mp3"
+    assert calls[0]["url"] == kugou_module.GATEWAY_URL
+    params = calls[0]["params"]
+    assert isinstance(params, dict)
+    assert params["hash"] == "abc123"
+    assert params["token"] == "TOKEN123"
+    assert params["userid"] == "2039242825"
+    # 传 1 会把免费曲目也截成试听，必须固定 0 让服务端自行决定
+    assert params["IsFreePart"] == 0
+    # 网关校验 signature：上游 song_url.js 写的是 notSign，而 request.js 判断的是 notSignature，
+    # 拼写不一致导致签名其实仍会生成——照字面省掉会被服务端以 err signature 拒绝
+    assert "signature" in params
+    mid = str(int(hashlib.md5(kugou_module.MID_SEED.encode()).hexdigest(), 16))
+    assert params["mid"] == mid
+    expected_key = hashlib.md5(
+        f"abc123{kugou_module.KEY_SALT}{kugou_module.APP_ID}{mid}2039242825".encode()
+    ).hexdigest()
+    assert params["key"] == expected_key
+    headers = calls[0]["headers"]
+    assert isinstance(headers, dict)
+    assert headers["x-router"] == kugou_module.GATEWAY_ROUTER
+    assert headers["Cookie"] == cookie
+
+
+def test_kugou_play_url_skips_gateway_when_cookie_incomplete(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cookie 里缺 t / KugooID 时不发网关请求，直接回退免登录 CDN。"""
+    urls: list[str] = []
+
+    async def fake_get_json(url: str, params: object = None, headers: object = None) -> object:
+        urls.append(url)
+        return {"status": 1, "url": ["http://cdn.example/free.mp3"]}
+
+    monkeypatch.setattr(kugou_module, "get_json", fake_get_json)
+    monkeypatch.setattr(
+        kugou_module.music_config, "get_config", lambda name: SimpleNamespace(data="kg_mid=abc; dfid=xyz")
+    )
+    song = SongInfo(platform="kugou", song_id="HASH", name="n", singers="s")
+    assert asyncio.run(kugou_module.KugouProvider().play_url(song)) == "http://cdn.example/free.mp3"
+    assert urls == [kugou_module.CDN_URL]
+
+
+def test_kugou_play_url_falls_back_when_gateway_refuses(monkeypatch: pytest.MonkeyPatch) -> None:
+    """网关拒绝（例如凭证过期）时要回退 CDN，而不是直接放弃。"""
+    urls: list[str] = []
+
+    async def fake_get_json(url: str, params: object = None, headers: object = None) -> object:
+        urls.append(url)
+        if url == kugou_module.GATEWAY_URL:
+            return {"status": 2, "fail_process": ["pkg", "buy"]}
+        return {"status": 1, "url": ["http://cdn.example/free.mp3"]}
+
+    monkeypatch.setattr(kugou_module, "get_json", fake_get_json)
+    monkeypatch.setattr(
+        kugou_module.music_config, "get_config", lambda name: SimpleNamespace(data="t=TOKEN; KugooID=123")
+    )
+    song = SongInfo(platform="kugou", song_id="HASH", name="n", singers="s")
+    assert asyncio.run(kugou_module.KugouProvider().play_url(song)) == "http://cdn.example/free.mp3"
+    assert urls == [kugou_module.GATEWAY_URL, kugou_module.CDN_URL]
 
 
 def test_qq_play_url_sends_anonymous_vkey_request(monkeypatch: pytest.MonkeyPatch) -> None:

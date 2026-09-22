@@ -21,6 +21,14 @@ CONFIG_DEFAULT: Dict[str, GSC] = {
         "",
         secret=True,
     ),
+    "kugou_cookie": GsStrConfig(
+        "酷狗 Cookie",
+        "填入浏览器酷狗网页版的完整 Cookie 后，需要单独购买专辑的曲目（周杰伦等原唱）可播放 60 秒试听片段，"
+        "完整版仍需在酷狗购买该专辑；免费曲目始终是完整版，不受影响。"
+        "获取方式：浏览器登录 kugou.com → F12 → Application → Cookies → 复制整条 Cookie",
+        "",
+        secret=True,
+    ),
     "netease_level": GsStrConfig(
         "网易云音质",
         "weapi 取流时优先尝试的档位，拿不到会自动降到标准档；lossless 体积很大（单曲可达 100MB+），群里发歌建议 exhigh",

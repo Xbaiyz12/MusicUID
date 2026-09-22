@@ -46,6 +46,7 @@
 | `default_platform` | `netease` | 未指定平台时使用 |
 | `netease_cookie` | 空 | 网易云 `MUSIC_U` 的值，填入后 VIP 歌曲与高音质才生效 |
 | `netease_level` | `exhigh` | 网易云取流优先档位，拿不到会自动降到标准档 |
+| `kugou_cookie` | 空 | 酷狗网页版完整 Cookie。填入后需单独购买专辑的曲目（周杰伦等原唱）可播 60 秒试听，完整版仍需在酷狗购买该专辑 |
 | `max_list` | `5` | 每平台条数（最大 10）。未指定平台时卡片总数 = 该值 × 3 |
 | `render_card` | `true` | 用图片卡片展示结果 |
 | `send_voice` | `true` | 以语音消息发送音频 |
@@ -63,7 +64,7 @@
 | --- | --- | --- | --- | --- |
 | 网易云音乐 | ✅ | ✅ | ✅ 免费曲 + VIP（需 `netease_cookie`） | ✅ 单曲 / 歌单 / 专辑 |
 | QQ音乐 | ✅ | — | ✅ 免费曲；会员曲需 Cookie | — |
-| 酷狗音乐 | ✅ | — | ✅ 绝大多数曲目 | — |
+| 酷狗音乐 | ✅ | — | ✅ 免费曲完整版；需单独购买专辑的曲目给 60 秒试听（需 `kugou_cookie`） | — |
 
 三个平台的取流链路都由插件自己实现，各有一条免登录捷径：
 
@@ -74,8 +75,15 @@
   匿名取流要用固定的 `guid=10000`、`uin=0`，且 `filename` 必须写成
   `C400{songmid}{songmid}.m4a`（songmid 拼两遍）。会员曲目返回 `104003`，此时退到
   128kbps mp3 再试一次，仍拿不到就提示用户。
-- **酷狗**：旧版 CDN `trackercdn.kugou.com/i/v2/`，只校验 `md5(hash + kgcloudv2)`
-  签名，既不需要登录态也不需要设备指纹，付费曲目同样按 128kbps 下发试听。
+- **酷狗**：两条链路。免登录走旧版 CDN `trackercdn.kugou.com/i/v2/`，只校验
+  `md5(hash + kgcloudv2)` 签名，不需要登录态也不需要设备指纹。填入 `kugou_cookie` 后先走
+  网关 `gateway.kugou.com/v5/url`，它要两个签名：`key` = md5(hash + 盐 + appid + mid +
+  userid)，以及 `signature` = md5(盐 + 按参数名排序的 k=v 拼接 + 盐)；`free_part` 固定为 0，
+  让服务端自行决定下发完整版还是试听片段（传 1 会把免费曲目也截断成试听）。⚠️ 上游
+  KuGouMusicApi 的 `song_url.js` 写的是 `notSign`，而它的 `request.js` 判断的是
+  `notSignature`，这个拼写不一致意味着签名**其实仍会生成**——照字面省掉签名会被服务端以
+  `err signature` 拒绝。设备指纹则相反：`mid` 用固定派生值、`dfid` 每次随机，直接沿用
+  Cookie 里的 mid / dfid 反而会被判 `20018`。
 
 因为走的是各平台的公开接口，**版权受限的曲目**（例如周杰伦在酷狗/QQ音乐的部分作品）
 即使标记为免费也可能取不到地址，插件会明确提示无法播放。
