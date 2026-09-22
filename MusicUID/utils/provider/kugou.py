@@ -214,9 +214,12 @@ class KugouProvider:
                 **EXTRA_HEADERS,
             },
         )
-        for raw in get_list(to_obj(payload), "url"):
+        body = to_obj(payload)
+        for raw in get_list(body, "url"):
             if isinstance(raw, str) and raw:
                 return raw
+        # 20018 = 未购买该专辑（只给试听），20028 = 触发人机验证；两者都回退免登录 CDN
+        logger.debug(f"[MusicUID] 酷狗网关未下发 {song.name}：status={body.get('status')} err={body.get('error_code')}")
         return ""
 
     async def _anonymous_play_url(self, song: SongInfo) -> str:
