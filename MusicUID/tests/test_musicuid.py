@@ -792,6 +792,24 @@ def test_install_render_deps_downloads_chromium(monkeypatch: pytest.MonkeyPatch)
     assert calls == [[sys.executable, "-m", "playwright", "install", "chromium"]]
 
 
+def test_install_render_deps_adds_with_deps_on_linux(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Linux 上必须带 --with-deps：只装内核本体仍会因缺系统库起不来。"""
+    calls: list[list[str]] = []
+
+    async def fake_run(cmd: list[str]) -> bool:
+        calls.append(cmd)
+        return True
+
+    async def fake_ready() -> bool:
+        return True
+
+    monkeypatch.setattr(lifecycle_module, "_run_setup", fake_run)
+    monkeypatch.setattr(lifecycle_module, "render_ready", fake_ready)
+    monkeypatch.setattr(lifecycle_module.sys, "platform", "linux")
+    asyncio.run(lifecycle_module.install_render_deps())
+    assert calls == [[sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"]]
+
+
 def test_install_render_deps_gives_up_on_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     """下载失败时立即收手，不继续后续步骤，也不抛异常。"""
     calls: list[list[str]] = []

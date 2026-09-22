@@ -79,7 +79,12 @@ async def install_render_deps() -> None:
         if not await _run_setup([python, "-m", "pip", "install", _RENDER_PACKAGE]):
             logger.warning("[MusicUID] playwright 安装失败，卡片将继续以纯文本返回")
             return
-    if not await _run_setup([python, "-m", _RENDER_PACKAGE, "install", "chromium"]):
+    # Linux 上除了内核本体还会缺一堆系统库，--with-deps 会用包管理器一并补齐
+    chromium_cmd = [python, "-m", _RENDER_PACKAGE, "install"]
+    if sys.platform.startswith("linux"):
+        chromium_cmd.append("--with-deps")
+    chromium_cmd.append("chromium")
+    if not await _run_setup(chromium_cmd):
         logger.warning("[MusicUID] Chromium 内核下载失败，卡片将继续以纯文本返回")
         return
     if await render_ready():
@@ -92,10 +97,13 @@ async def install_render_deps() -> None:
 async def prepare_render_env() -> None:
     """启动时检测渲染环境，缺失时在后台自动补齐（不阻塞启动）。"""
     if not music_config.get_config("auto_install_render").data:
+        logger.debug("[MusicUID] 自动安装渲染依赖已关闭，跳过检测")
         return
+    logger.info("[MusicUID] 正在检测卡片渲染环境")
     if await render_ready():
-        logger.debug("[MusicUID] 卡片渲染环境正常")
+        logger.info("[MusicUID] 卡片渲染环境正常，图片卡片可用")
         return
+    logger.info("[MusicUID] 卡片渲染环境不可用，将在后台自动下载 Chromium")
     asyncio.create_task(install_render_deps())
 
 
