@@ -101,7 +101,8 @@
   只有 `pay_play=0` 的免费曲目能拿到地址，会员曲目一律返回 `104003`；填入
   `qqmusic_cookie` 后改用 Cookie 里的真实 QQ 号（`uin`、`loginUin`、`comm.uin` 三处都要
   跟着改）并带上 Cookie，会员曲目与 320kbps 档位才会下发。⚠️ **搜索也必须带 Cookie**：
-  QQ音乐对未登录的搜索请求会直接返回空列表。
+  搜索走 `musicu.fcg` 的 `DoSearchForQQMusicDesktop`（旧的 `client_search_cp` 已被腾讯关闭，
+  任何请求都返回 HTTP 500），而该接口不带 Cookie 时会返回 200 但列表为空。
 - **酷狗**：两条链路。免登录走旧版 CDN `trackercdn.kugou.com/i/v2/`，只校验
   `md5(hash + kgcloudv2)` 签名，不需要登录态也不需要设备指纹。填入 `kugou_cookie` 后先走
   网关 `gateway.kugou.com/v5/url`，它要两个签名：`key` = md5(hash + 盐 + appid + mid +

@@ -255,6 +255,61 @@ def test_kugou_detail_marks_paid_track(monkeypatch: pytest.MonkeyPatch) -> None:
     assert song.payplay is True
 
 
+def test_qq_search_uses_musicu_desktop_cgi(monkeypatch: pytest.MonkeyPatch) -> None:
+    """搜索必须走 musicu.fcg 的桌面 CGI —— 旧的 client_search_cp 已被腾讯关闭（HTTP 500）。"""
+    calls: list[dict[str, object]] = []
+
+    async def fake_post_json(url: str, data: object, headers: object = None, as_json: bool = False) -> object:
+        calls.append({"url": url, "data": data, "as_json": as_json})
+        return {
+            "req": {
+                "data": {
+                    "body": {
+                        "song": {
+                            "list": [
+                                {
+                                    "mid": "0039MnYb0qxYhV",
+                                    "title": "晴天",
+                                    "singer": [{"name": "周杰伦"}],
+                                    "album": {"mid": "000MkMni19ClKG", "name": "叶惠美"},
+                                    "interval": 269,
+                                    "pay": {"pay_play": 1},
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+
+    cookie = "uin=675457315; qm_keyst=Q_H_L_xxx"
+    monkeypatch.setattr(qq_module, "post_json", fake_post_json)
+    monkeypatch.setattr(qq_module.music_config, "get_config", lambda name: SimpleNamespace(data=cookie))
+    songs = asyncio.run(qq_module.QqMusicProvider().search("晴天", 5))
+
+    assert calls[0]["url"] == qq_module.MUSICU_URL
+    assert calls[0]["as_json"] is True
+    data = calls[0]["data"]
+    assert isinstance(data, dict)
+    req = data["req"]
+    assert isinstance(req, dict)
+    assert req["method"] == "DoSearchForQQMusicDesktop"
+    param = req["param"]
+    assert isinstance(param, dict)
+    assert param["num_per_page"] == 5
+    assert param["query"] == "晴天"
+
+    assert len(songs) == 1
+    song = songs[0]
+    assert song.song_id == "0039MnYb0qxYhV"
+    assert song.name == "晴天"
+    assert song.singers == "周杰伦"
+    assert song.album == "叶惠美"
+    assert song.duration_sec == 269
+    assert song.payplay is True
+    assert "000MkMni19ClKG" in song.cover_url
+
+
 def test_qq_play_url_sends_anonymous_vkey_request(monkeypatch: pytest.MonkeyPatch) -> None:
     """匿名取流固定 guid=10000 / uin=0，filename 里的 songmid 要拼两遍。"""
     calls: list[dict[str, object]] = []

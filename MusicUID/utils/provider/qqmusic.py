@@ -10,9 +10,12 @@ from ..http import get_json, post_json
 from ..json_tools import to_obj, get_int, get_obj, get_str, get_list, join_names
 from ...musicuid_config import music_config
 
-SEARCH_URL: Final[str] = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp"
+# musicu.fcg 同时承担搜索与取流；旧的 client_search_cp 已被腾讯关闭（一律返回 HTTP 500）
+MUSICU_URL: Final[str] = "https://u.y.qq.com/cgi-bin/musicu.fcg"
 DETAIL_URL: Final[str] = "https://c.y.qq.com/v8/fcg-bin/fcg_play_single_song.fcg"
-VKEY_URL: Final[str] = "https://u.y.qq.com/cgi-bin/musicu.fcg"
+VKEY_URL: Final[str] = MUSICU_URL
+SEARCH_MODULE: Final[str] = "music.search.SearchCgiService"
+SEARCH_METHOD: Final[str] = "DoSearchForQQMusicDesktop"
 COVER_URL: Final[str] = "https://y.qq.com/music/photo_new/T002R300x300M000{}.jpg"
 HEADERS: Final[dict[str, str]] = {"Referer": "https://y.qq.com/portal/player.html"}
 
@@ -47,10 +50,11 @@ class QqMusicProvider:
     supports_play = True
 
     async def search(self, keyword: str, limit: int) -> list[SongInfo]:
-        """Search songs through the public ``client_search_cp`` endpoint.
+        """Search songs through the desktop search CGI on ``musicu.fcg``.
 
-        填了 ``qqmusic_cookie`` 时搜索也会带上登录态：QQ音乐对未登录的搜索请求会返回
-        空结果，带上 Cookie 才稳定。
+        旧的 ``client_search_cp``（``c.y.qq.com/soso/...``）已被腾讯关闭，任何请求都返回
+        HTTP 500，所以改走 ``DoSearchForQQMusicDesktop``。这个接口**必须带登录态**：
+        不带 Cookie 时它返回 200 但列表为空，所以 ``qqmusic_cookie`` 是搜索可用的前提。
 
         Args:
             keyword: User supplied keywords.
@@ -62,40 +66,44 @@ class QqMusicProvider:
         Raises:
             MusicRequestError: The platform request failed.
         """
-        payload = await get_json(
-            SEARCH_URL,
-            params={
-                "w": keyword,
-                "n": limit,
-                "p": 1,
-                "cr": 1,
-                "aggr": 1,
-                "format": "json",
-                "inCharset": "utf8",
-                "outCharset": "utf-8",
-                "platform": "yqq.json",
-                "needNewCode": 0,
+        payload = await post_json(
+            MUSICU_URL,
+            {
+                "comm": {"ct": "19", "cv": "1859", "uin": "0"},
+                "req": {
+                    "method": SEARCH_METHOD,
+                    "module": SEARCH_MODULE,
+                    "param": {
+                        "grp": 1,
+                        "num_per_page": limit,
+                        "page_num": 1,
+                        "query": keyword,
+                        "search_type": 0,
+                    },
+                },
             },
             headers=_cookie_headers(),
+            as_json=True,
         )
-        song_node = get_obj(get_obj(to_obj(payload), "data"), "song")
+        song_node = get_obj(get_obj(get_obj(get_obj(to_obj(payload), "req"), "data"), "body"), "song")
         songs: list[SongInfo] = []
         for raw in get_list(song_node, "list"):
             item = to_obj(raw)
-            song_mid = get_str(item, "songmid")
+            song_mid = get_str(item, "mid")
             if not song_mid:
                 continue
-            album_mid = get_str(item, "albummid")
+            album = get_obj(item, "album")
+            album_mid = get_str(album, "mid")
             songs.append(
                 SongInfo(
                     platform=self.platform,
                     song_id=song_mid,
-                    name=get_str(item, "songname", "未知歌曲"),
+                    name=get_str(item, "title", "未知歌曲"),
                     singers=join_names(item.get("singer")) or "未知歌手",
-                    album=get_str(item, "albumname"),
+                    album=get_str(album, "name"),
                     duration_sec=get_int(item, "interval"),
                     cover_url=COVER_URL.format(album_mid) if album_mid else "",
-                    payplay=get_int(get_obj(item, "pay"), "payplay") > 0,
+                    payplay=get_int(get_obj(item, "pay"), "pay_play") > 0,
                 )
             )
         return songs
