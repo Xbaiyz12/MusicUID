@@ -770,6 +770,11 @@ def test_close_browser_is_idempotent() -> None:
 # ---------------------------------------------------------------- 渲染依赖自检与自动安装
 
 
+def test_pytakumi_is_available_in_this_env() -> None:
+    """core 自带 pytakumi，主渲染路径应能探测到（探测到就不必碰浏览器）。"""
+    assert lifecycle_module.pytakumi_available() is True
+
+
 def test_run_setup_returns_false_for_missing_command() -> None:
     """命令不存在时返回 False，不能向调用方抛异常（否则会打断启动钩子）。"""
     assert asyncio.run(lifecycle_module._run_setup(["definitely-not-a-real-command-xyz"])) is False

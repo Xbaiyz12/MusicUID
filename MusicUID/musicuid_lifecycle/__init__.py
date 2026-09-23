@@ -93,17 +93,31 @@ async def install_render_deps() -> None:
         logger.warning("[MusicUID] 依赖已装上但浏览器仍无法启动，建议重载一次插件")
 
 
+def pytakumi_available() -> bool:
+    """Report whether GsCore's built-in pytakumi renderer is importable.
+
+    这是主渲染路径：纯本地、不需要浏览器，所以只要它在，就完全不必碰 Chromium。
+
+    Returns:
+        ``True`` when pytakumi can be imported.
+    """
+    return importlib.util.find_spec("pytakumi") is not None
+
+
 @on_core_start
 async def prepare_render_env() -> None:
-    """启动时检测渲染环境，缺失时在后台自动补齐（不阻塞启动）。"""
+    """启动时检测渲染环境，只在缺 pytakumi 时才去补浏览器回退（不阻塞启动）。"""
+    if pytakumi_available():
+        logger.info("[MusicUID] 卡片渲染就绪（pytakumi，无需浏览器）")
+        return
+    logger.info("[MusicUID] 未检测到 pytakumi，将尝试浏览器渲染回退")
     if not music_config.get_config("auto_install_render").data:
         logger.debug("[MusicUID] 自动安装渲染依赖已关闭，跳过检测")
         return
-    logger.info("[MusicUID] 正在检测卡片渲染环境")
     if await render_ready():
-        logger.info("[MusicUID] 卡片渲染环境正常，图片卡片可用")
+        logger.info("[MusicUID] 浏览器渲染可用，图片卡片就绪")
         return
-    logger.info("[MusicUID] 卡片渲染环境不可用，将在后台自动下载 Chromium")
+    logger.info("[MusicUID] 浏览器渲染也不可用，将在后台自动下载 Chromium")
     asyncio.create_task(install_render_deps())
 
 

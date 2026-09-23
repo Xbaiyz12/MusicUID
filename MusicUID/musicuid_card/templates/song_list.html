@@ -39,13 +39,18 @@
       box-shadow: 0 14px 28px rgba(20, 20, 40, 0.1);
     }
 
+    /* hero 主题：单平台用该平台色，多平台用中性紫。
+       渐变端点必须写成字面色值：pytakumi(Takumi) 不解析 var() 作为渐变端点，
+       写成 var(--c1) 会让整条 background 失效、hero 变白底白字而“消失”。 */
     .hero {
       padding: 24px 24px 20px;
       color: #fff;
-      background:
-        radial-gradient(circle at 88% 16%, rgba(255, 255, 255, 0.26) 0%, transparent 44%),
-        linear-gradient(135deg, var(--c1) 0%, var(--c2) 100%);
+      background: linear-gradient(135deg, #7b6ce0 0%, #4c3fa8 100%);
     }
+
+    body.netease .hero { background: linear-gradient(135deg, #f0605a 0%, #d63333 100%); }
+    body.qq .hero      { background: linear-gradient(135deg, #3fd18d 0%, #189c5c 100%); }
+    body.kugou .hero   { background: linear-gradient(135deg, #5cb9f8 0%, #1c7fce 100%); }
 
     .hero-top { display: flex; align-items: flex-start; gap: 14px; }
 
@@ -256,7 +261,7 @@
     <div class="card">
       <div class="hero">
         <div class="hero-top">
-          <div class="brand">♪</div>
+          <div class="brand">🎵</div>
           <div class="hero-text">
             <div class="eyebrow">{{ data.eyebrow }}</div>
             <div class="title">{{ data.keyword or '点歌结果' }}</div>

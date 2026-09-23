@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import base64
+import asyncio
 from dataclasses import field, dataclass
 
 from gsuid_core.bot import Bot
 from gsuid_core.logger import logger
 from gsuid_core.segment import MessageSegment
 
+from ..utils.http import get_client
 from ..utils.render import render_card
 from ..utils.provider import SongInfo, get_provider
 from ..musicuid_config import music_config
@@ -100,6 +103,32 @@ def plain_song_list(keyword: str, results: list[PlatformResult], play_hint: str)
     return "\n".join(lines)
 
 
+async def _inline_covers(rows: list[dict[str, object]]) -> None:
+    """Download covers and inline them as data URIs.
+
+    pytakumi 渲染器不联网取图，留着远程 URL 会画成空白，所以先把封面抓回来内联。
+    单张失败只清空该行封面，绝不影响整张卡片。
+
+    Args:
+        rows: Template rows produced by :func:`_song_row`, modified in place.
+    """
+
+    async def one(row: dict[str, object]) -> None:
+        url = row.get("cover")
+        if not isinstance(url, str) or not url.startswith("http"):
+            return
+        try:
+            resp = await get_client().get(url)
+            resp.raise_for_status()
+            mime = resp.headers.get("content-type", "image/jpeg").split(";")[0]
+            row["cover"] = f"data:{mime};base64,{base64.b64encode(resp.content).decode()}"
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"[MusicUID] 封面内联失败（{url[:60]}）：{e}")
+            row["cover"] = ""
+
+    await asyncio.gather(*(one(row) for row in rows))
+
+
 async def send_song_list(
     bot: Bot,
     keyword: str,
@@ -125,11 +154,13 @@ async def send_song_list(
         playable_names = [r.display_name for r in results if r.playable and r.songs]
         index = 0
         groups: list[dict[str, object]] = []
+        all_rows: list[dict[str, object]] = []
         for result in results:
             rows: list[dict[str, object]] = []
             for song in result.songs:
                 index += 1
                 rows.append(_song_row(index, song))
+            all_rows.extend(rows)
             groups.append(
                 {
                     "platform": result.platform,
@@ -139,6 +170,8 @@ async def send_song_list(
                     "empty_text": result.error or "没有搜到相关歌曲",
                 }
             )
+        # pytakumi 渲染器不联网取图，封面必须先内联成 data URI
+        await _inline_covers(all_rows)
         hit_names = "、".join(r.display_name for r in results if r.songs)
         if playable_names:
             tip = (

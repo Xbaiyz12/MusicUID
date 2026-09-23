@@ -24,6 +24,10 @@ IDLE_TIMEOUT_MS = 8000
 SETTLE_MS = 50
 CHROME_ARGS = ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
 
+# 卡片模板里 .card 的 CSS 宽；pytakumi 的 root_max_width 必须等于它，
+# 否则 dpr>1 时框架会把设备像素宽写进根容器，右侧内容被裁掉。
+CARD_CSS_WIDTH = 560
+
 _HINT = (
     "卡片渲染不可用：请在 GsCore 的 Python 环境执行 pip install playwright 与 "
     "python -m playwright install chromium，然后重载插件；期间指令仍以纯文本返回。"
@@ -143,18 +147,18 @@ async def _open_page() -> Page | None:
 
 
 async def render_card(template_name: str, data: dict[str, object]) -> bytes | None:
-    """Render a Jinja template into a PNG screenshot.
+    """Render a Jinja template into a PNG.
+
+    优先用 GsCore 自带的 pytakumi（纯本地、无需浏览器、更快更省内存），失败才回退
+    常驻 Chromium。pytakumi 不联网取图，所以调用方需要把封面内联成 data URI。
 
     Args:
         template_name: File name inside ``musicuid_card/templates``.
         data: Template payload, exposed as ``data`` in the template.
 
     Returns:
-        PNG bytes, or ``None`` when the environment or template is unusable.
+        PNG bytes, or ``None`` when both backends are unusable.
     """
-    browser = await _get_browser()
-    if browser is None:
-        return None
     try:
         template = _env.get_template(template_name)
     except jinja2.TemplateNotFound:
@@ -162,6 +166,51 @@ async def render_card(template_name: str, data: dict[str, object]) -> bytes | No
         return None
     html = template.render(data=data)
 
+    png = await _render_pytakumi(html)
+    if png is not None:
+        return png
+    return await _render_playwright(html)
+
+
+async def _render_pytakumi(html: str) -> bytes | None:
+    """Render through GsCore's pytakumi backend (no browser required).
+
+    Args:
+        html: Rendered card HTML.
+
+    Returns:
+        PNG bytes, or ``None`` when pytakumi is missing or failed.
+    """
+    try:
+        from gsuid_core.utils.html_render import render_html_to_bytes
+    except ImportError as e:
+        logger.debug(f"[MusicUID] pytakumi 不可用，改用浏览器渲染：{e}")
+        return None
+    try:
+        return await render_html_to_bytes(
+            html,
+            max_width=CARD_CSS_WIDTH * 2,
+            dpi=192,
+            root_max_width=CARD_CSS_WIDTH,
+            default_font_size=14,
+        )
+    except Exception as e:
+        logger.debug(f"[MusicUID] pytakumi 渲染失败，改用浏览器渲染：{e}")
+        return None
+
+
+async def _render_playwright(html: str) -> bytes | None:
+    """Screenshot the page with the resident Chromium (fallback path).
+
+    Args:
+        html: Rendered card HTML.
+
+    Returns:
+        PNG bytes, or ``None`` when no browser could be used.
+    """
+    browser = await _get_browser()
+    if browser is None:
+        return None
     page = await _open_page()
     if page is None:
         return None
