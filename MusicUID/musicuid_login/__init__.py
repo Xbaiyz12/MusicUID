@@ -106,7 +106,7 @@ def _mask_cookie(val: object) -> str:
 # ---------------------------------------------------------------- 白名单管理
 
 
-@sv_login.on_prefix(
+@sv_login.on_command(
     ("点歌加白", "点歌添加白名单", "点歌白名单添加", "音乐添加白名单"),
     block=True,
     to_ai="添加用户至音乐登录白名单（仅主人可用）",
@@ -142,7 +142,7 @@ async def add_whitelist(bot: Bot, ev: Event) -> None:
     await bot.send(f"✅ 已成功将用户【{', '.join(added)}】加入点歌登录白名单。")
 
 
-@sv_login.on_prefix(
+@sv_login.on_command(
     ("点歌删白", "点歌删除白名单", "点歌白名单删除", "音乐删除白名单"),
     block=True,
     to_ai="从音乐登录白名单移除用户（仅主人可用）",
@@ -231,7 +231,7 @@ async def check_login_status(bot: Bot, ev: Event) -> None:
 # ---------------------------------------------------------------- Cookie 快捷设置
 
 
-@sv_login.on_prefix(
+@sv_login.on_command(
     (
         "qq音乐cookie",
         "qqcookie",
@@ -325,7 +325,7 @@ async def handle_set_cookie(bot: Bot, ev: Event) -> None:
 # ---------------------------------------------------------------- 扫码登录
 
 
-@sv_login.on_prefix(
+@sv_login.on_command(
     (
         "点歌登录",
         "音乐登录",
@@ -334,6 +334,7 @@ async def handle_set_cookie(bot: Bot, ev: Event) -> None:
         "酷狗登录",
         "QQ登录",
         "QQ音乐登录",
+        "扫码登录",
     ),
     block=True,
     to_ai="音乐平台扫码登录或获取登录二维码",
@@ -381,9 +382,12 @@ async def handle_login(bot: Bot, ev: Event) -> None:
         await bot.send(f"❌ 生成二维码失败：{session.message}")
         return
 
-    msg = MessageSegment.image(session.qr_bytes) + MessageSegment.text(
-        f"\n{session.message}\n（二维码有效期约 2 分钟，请打开对应 APP 扫码并确认登录）"
-    )
+    msg = [
+        MessageSegment.image(session.qr_bytes),
+        MessageSegment.text(
+            f"\n{session.message}\n（二维码有效期约 2 分钟，请打开对应 APP 扫码并确认登录）"
+        ),
+    ]
     await bot.send(msg)
 
     # 4. 启动后台轮询任务

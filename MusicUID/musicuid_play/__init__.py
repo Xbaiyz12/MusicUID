@@ -173,7 +173,12 @@ async def song_request(bot: Bot, ev: Event) -> None:
         "导入cookie",
         "绑定",
     )
-    if clean_kw.startswith(control_prefixes):
+    if (
+        clean_kw.startswith(control_prefixes)
+        or "登录" in clean_kw
+        or "cookie" in clean_kw
+        or "白名单" in clean_kw
+    ):
         from ..musicuid_login import (
             handle_login,
             add_whitelist,
@@ -183,10 +188,10 @@ async def song_request(bot: Bot, ev: Event) -> None:
             check_login_status,
         )
 
-        if clean_kw.startswith(("状态", "status")):
+        if clean_kw.startswith(("状态", "status")) or clean_kw == "登录状态":
             await check_login_status(bot, ev)
             return
-        if clean_kw.startswith(("白名单", "白名单列表")):
+        if clean_kw in ("白名单", "白名单列表") or clean_kw.startswith("白名单"):
             await list_whitelist(bot, ev)
             return
         if clean_kw.startswith(("加白", "添加白名单")):
@@ -209,7 +214,7 @@ async def song_request(bot: Bot, ev: Event) -> None:
             await handle_set_cookie(bot, ev)
             return
 
-        # 登录处理
+        # 登录处理（如 网易云登录、酷狗登录、登录 网易云 等）
         ev.command = "点歌登录"
         ev.text = clean_kw.replace("登录", "", 1).replace("login", "", 1).strip()
         await handle_login(bot, ev)

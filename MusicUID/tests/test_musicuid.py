@@ -1089,5 +1089,40 @@ def test_qq_cookie_direct_command(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "uin=123; qm_keyst=abc" in str(saved_config.get("qqmusic_cookie"))
 
 
+def test_handle_login_direct_trigger(monkeypatch: pytest.MonkeyPatch) -> None:
+    from MusicUID.MusicUID.musicuid_login import handle_login
+    from MusicUID.MusicUID.musicuid_config import music_config
+
+    sent_messages: list[object] = []
+
+    class MockBot:
+        async def send(self, msg: object) -> None:
+            sent_messages.append(msg)
+
+    monkeypatch.setattr(music_config, "get_config", lambda name: SimpleNamespace(data=[]))
+
+    # 1. 仅发送 "点歌登录" (无参数) -> 输出平台登录指引菜单
+    bot = MockBot()
+    ev_menu = Event(user_id="10001", user_pm=1, command="点歌登录", text="")
+    asyncio.run(handle_login(bot, ev_menu))
+    assert len(sent_messages) >= 1
+    assert "手机扫码一键登录" in str(sent_messages[0])
+
+    # 2. 发送 "网易云登录" (command 为 网易云登录, text 为 "") -> 发起扫码流程
+    sent_messages.clear()
+    ev_wyy = Event(user_id="10001", user_pm=1, command="网易云登录", text="")
+    asyncio.run(handle_login(bot, ev_wyy))
+    assert len(sent_messages) >= 1
+    assert "正在生成【网易云音乐】登录二维码" in str(sent_messages[0])
+
+    # 3. 发送 "QQ登录" -> 输出 QQ 音乐配置教程
+    sent_messages.clear()
+    ev_qq = Event(user_id="10001", user_pm=1, command="QQ登录", text="")
+    asyncio.run(handle_login(bot, ev_qq))
+    assert len(sent_messages) >= 1
+    assert "QQ音乐 Cookie 极简配置教程" in str(sent_messages[0])
+
+
+
 
 
