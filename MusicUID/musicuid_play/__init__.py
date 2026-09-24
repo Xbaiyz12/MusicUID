@@ -138,7 +138,7 @@ async def play_song(bot: Bot, song: SongInfo) -> None:
         await bot.send(reason)
 
 
-@sv_song_request.on_command(("点歌", "搜歌", "搜索歌曲"), to_ai="搜索指定歌曲并返回音乐卡片列表")
+@sv_song_request.on_command(("点歌", "搜歌", "搜索歌曲"), block=True, to_ai="搜索指定歌曲并返回音乐卡片列表")
 async def song_request(bot: Bot, ev: Event) -> None:
     """搜索歌曲并列出结果：未指定平台时三平台并发搜索。
 
@@ -150,6 +150,71 @@ async def song_request(bot: Bot, ev: Event) -> None:
     if not keyword:
         await bot.send(f"{REQUEST_TIP}\n{PLATFORM_TIP}")
         return
+
+    clean_kw = keyword.strip().lower()
+
+    # 1. 帮助指令拦截路由
+    if clean_kw in ("帮助", "help", "菜单", "menu"):
+        from ..musicuid_help import send_help
+        await send_help(bot, ev)
+        return
+
+    # 2. 登录与凭据控制指令拦截路由（防止被误当作歌名搜索）
+    control_prefixes = (
+        "登录",
+        "login",
+        "状态",
+        "status",
+        "白名单",
+        "加白",
+        "删白",
+        "cookie",
+        "设置cookie",
+        "导入cookie",
+        "绑定",
+    )
+    if clean_kw.startswith(control_prefixes):
+        from ..musicuid_login import (
+            handle_login,
+            add_whitelist,
+            list_whitelist,
+            remove_whitelist,
+            handle_set_cookie,
+            check_login_status,
+        )
+
+        if clean_kw.startswith(("状态", "status")):
+            await check_login_status(bot, ev)
+            return
+        if clean_kw.startswith(("白名单", "白名单列表")):
+            await list_whitelist(bot, ev)
+            return
+        if clean_kw.startswith(("加白", "添加白名单")):
+            ev.text = clean_kw.replace("添加白名单", "", 1).replace("加白", "", 1).strip()
+            await add_whitelist(bot, ev)
+            return
+        if clean_kw.startswith(("删白", "删除白名单")):
+            ev.text = clean_kw.replace("删除白名单", "", 1).replace("删白", "", 1).strip()
+            await remove_whitelist(bot, ev)
+            return
+        if "cookie" in clean_kw or clean_kw.startswith("绑定"):
+            ev.command = "设置cookie"
+            ev.text = (
+                clean_kw.replace("设置cookie", "", 1)
+                .replace("导入cookie", "", 1)
+                .replace("cookie", "", 1)
+                .replace("绑定", "", 1)
+                .strip()
+            )
+            await handle_set_cookie(bot, ev)
+            return
+
+        # 登录处理
+        ev.command = "点歌登录"
+        ev.text = clean_kw.replace("登录", "", 1).replace("login", "", 1).strip()
+        await handle_login(bot, ev)
+        return
+
     if platform:
         results = [await search_platform(platform, keyword)]
     else:

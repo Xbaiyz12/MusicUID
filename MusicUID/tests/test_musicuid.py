@@ -1027,4 +1027,67 @@ def test_send_help_card_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     assert sent_messages == ["纯文本帮助信息"]
 
 
+def test_command_conflict_interception(monkeypatch: pytest.MonkeyPatch) -> None:
+    from MusicUID.MusicUID.musicuid_play import song_request
+    from MusicUID.MusicUID.musicuid_config import music_config
+
+    sent_messages: list[object] = []
+
+    class MockBot:
+        async def send(self, msg: object) -> None:
+            sent_messages.append(msg)
+
+    monkeypatch.setattr(music_config, "get_config", lambda name: SimpleNamespace(data=False))
+
+    # 1. 用户输入 "点歌 帮助" -> 路由到帮助，不搜歌
+    bot = MockBot()
+    ev_help = Event(user_id="10001", user_pm=1, text="帮助", command="点歌")
+    asyncio.run(song_request(bot, ev_help))
+    assert len(sent_messages) >= 1
+    assert "🎵 MusicUID · 多平台点歌" in str(sent_messages[0])
+
+    # 2. 用户输入 "点歌 白名单" -> 路由到白名单列表，不搜歌
+    sent_messages.clear()
+    ev_wl = Event(user_id="10001", user_pm=1, text="白名单", command="点歌")
+    asyncio.run(song_request(bot, ev_wl))
+    assert len(sent_messages) >= 1
+    assert "MusicUID 登录白名单" in str(sent_messages[0])
+
+    # 3. 用户输入 "点歌 状态" -> 路由到凭据状态查询
+    sent_messages.clear()
+    ev_status = Event(user_id="10001", user_pm=1, text="状态", command="点歌")
+    asyncio.run(song_request(bot, ev_status))
+    assert len(sent_messages) >= 1
+    assert "MusicUID 音乐平台凭据状态" in str(sent_messages[0])
+
+
+def test_qq_cookie_direct_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    from MusicUID.MusicUID.musicuid_login import handle_set_cookie
+    from MusicUID.MusicUID.musicuid_config import music_config
+
+    saved_config: dict[str, object] = {}
+    monkeypatch.setattr(music_config, "set_config", lambda k, v: saved_config.update({k: v}))
+    monkeypatch.setattr(music_config, "get_config", lambda name: SimpleNamespace(data=[]))
+
+    sent_messages: list[object] = []
+
+    class MockBot:
+        async def send(self, msg: object) -> None:
+            sent_messages.append(msg)
+
+    # 1. 用户只发送 "QQ音乐cookie"（无参数） -> 发送指引教程
+    bot = MockBot()
+    ev_guide = Event(user_id="10001", user_pm=1, command="qq音乐cookie", text="")
+    asyncio.run(handle_set_cookie(bot, ev_guide))
+    assert "QQ音乐 Cookie 极简配置教程" in str(sent_messages[0])
+
+    # 2. 用户发送 "QQ音乐cookie uin=123; qm_keyst=abc" -> 成功更新
+    sent_messages.clear()
+    ev_set = Event(user_id="10001", user_pm=1, command="qq音乐cookie", text="uin=123; qm_keyst=abc")
+    asyncio.run(handle_set_cookie(bot, ev_set))
+    assert "已成功更新【QQ 音乐】Cookie" in str(sent_messages[0])
+    assert "uin=123; qm_keyst=abc" in str(saved_config.get("qqmusic_cookie"))
+
+
+
 
