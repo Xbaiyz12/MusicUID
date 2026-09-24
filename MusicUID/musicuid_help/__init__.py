@@ -7,6 +7,8 @@ from gsuid_core.bot import Bot
 from gsuid_core.models import Event
 from gsuid_core.help.utils import register_help
 
+from ..musicuid_card import send_help_card
+
 sv_help = SV("点歌帮助", priority=3)
 
 HELP_COMMANDS = ("音乐帮助", "听歌帮助", "音乐菜单")
@@ -51,7 +53,7 @@ async def send_help(bot: Bot, ev: Event) -> None:
         bot: Bot wrapper bound to the current event.
         ev: The triggering event.
     """
-    await bot.send(HELP_TEXT)
+    await send_help_card(bot, HELP_TEXT)
 
 
 register_help("MusicUID", HELP_COMMANDS[0])

@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MusicUID 帮助菜单</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: fit-content;
+      height: fit-content;
+      background: #f6f6f8 !important;
+      font-family: "MiSans", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+      color: #2b2b33;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: geometricPrecision;
+    }
+
+    .theme-multi { --c1: #7b6ce0; --c2: #4c3fa8; --c: #6b5bd2; --soft: #efedfd; }
+
+    /* 分组色彩 */
+    .grp.p-search { --gc: #6b5bd2; --gsoft: #efedfd; --gline: rgba(107, 91, 210, 0.2); }
+    .grp.p-login  { --gc: #e65c00; --gsoft: #fef1e6; --gline: rgba(230, 92, 0, 0.2); }
+    .grp.p-link   { --gc: #31c27c; --gsoft: #e9f9f1; --gline: rgba(49, 194, 124, 0.2); }
+    .grp.p-config { --gc: #2ca2f9; --gsoft: #e8f4fd; --gline: rgba(44, 162, 249, 0.2); }
+
+    .page { display: block; width: fit-content; padding: 16px; background: #f6f6f8; }
+
+    .card {
+      width: 560px;
+      border-radius: 26px;
+      overflow: hidden;
+      background: #fff;
+      border: 1px solid rgba(0, 0, 0, 0.06);
+      box-shadow: 0 14px 28px rgba(20, 20, 40, 0.1);
+    }
+
+    .hero {
+      padding: 24px 24px 20px;
+      color: #fff;
+      background: linear-gradient(135deg, #7b6ce0 0%, #4c3fa8 100%);
+    }
+
+    .hero-top { display: flex; align-items: flex-start; gap: 14px; }
+
+    .brand {
+      width: 46px;
+      height: 46px;
+      border-radius: 15px;
+      background: rgba(255, 255, 255, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.34);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 23px;
+      flex-shrink: 0;
+    }
+
+    .hero-text { flex: 1; min-width: 0; }
+
+    .eyebrow { font-size: 11px; font-weight: 700; letter-spacing: 2.4px; opacity: 0.86; }
+
+    .title {
+      margin-top: 6px;
+      font-size: 24px;
+      font-weight: 800;
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .subtitle { margin-top: 6px; font-size: 12.5px; opacity: 0.92; line-height: 1.4; }
+
+    .pill {
+      flex-shrink: 0;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.18);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .body { padding: 16px 16px 12px; }
+
+    .grp { margin-bottom: 14px; }
+    .grp:last-of-type { margin-bottom: 6px; }
+
+    .grp-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 4px 8px;
+    }
+
+    .grp-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--gc, #888);
+      box-shadow: 0 0 0 3px var(--gsoft, rgba(0, 0, 0, 0.05));
+    }
+
+    .grp-name { font-size: 13.5px; font-weight: 800; color: var(--gc, #333); letter-spacing: 0.3px; }
+
+    .grp-count {
+      margin-left: auto;
+      font-size: 10.5px;
+      font-weight: 700;
+      color: var(--gc, #666);
+      background: var(--gsoft, #f2f2f2);
+      border: 1px solid var(--gline, rgba(0, 0, 0, 0.06));
+      padding: 2px 8px;
+      border-radius: 999px;
+    }
+
+    .cmd-item {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 9px 13px;
+      border-radius: 14px;
+      background: linear-gradient(165deg, #ffffff 0%, #fbfbfd 100%);
+      border: 1px solid rgba(0, 0, 0, 0.06);
+      margin-bottom: 7px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .cmd-item::before {
+      content: "";
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 3.5px;
+      background: var(--gc, #999);
+      opacity: 0.85;
+    }
+
+    .cmd-badge {
+      display: inline-block;
+      font-size: 12.5px;
+      font-weight: 800;
+      color: #2b2b33;
+      background: #f1f1f5;
+      padding: 3px 8px;
+      border-radius: 8px;
+      font-family: "Cascadia Code", "Consolas", monospace;
+    }
+
+    .cmd-meta { min-width: 0; }
+
+    .cmd-desc {
+      font-size: 12px;
+      color: #72727e;
+      line-height: 1.35;
+      margin-top: 1px;
+    }
+
+    .cmd-tag {
+      font-size: 9.5px;
+      font-weight: 800;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--gsoft, #f2f2f2);
+      color: var(--gc, #666);
+      letter-spacing: 0.3px;
+      white-space: nowrap;
+    }
+
+    .cmd-tag.perm { background: #feebeb; color: #e03131; }
+    .cmd-tag.vip { background: #fdf3e0; color: #d99a2b; }
+
+    .plat-cards {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .plat-card {
+      background: #fafafc;
+      border: 1px solid rgba(0, 0, 0, 0.05);
+      border-radius: 12px;
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .plat-card-title {
+      font-size: 11.5px;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .plat-card.netease .plat-card-title { color: #ec4141; }
+    .plat-card.qq .plat-card-title      { color: #31c27c; }
+    .plat-card.kugou .plat-card-title   { color: #2ca2f9; }
+
+    .plat-card-desc {
+      font-size: 10px;
+      color: #888894;
+      line-height: 1.3;
+    }
+
+    .tip {
+      margin-top: 6px;
+      padding: 11px 13px;
+      border-radius: 14px;
+      background: #efedfd;
+      font-size: 11.5px;
+      color: #6d6d78;
+      line-height: 1.6;
+    }
+
+    .tip b { color: #6b5bd2; }
+
+    .footer {
+      margin-top: 10px;
+      padding: 2px 4px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 10.5px;
+      color: #9a9aa4;
+    }
+
+    .footer .brand-name { color: #6b5bd2; font-weight: 700; }
+  </style>
+</head>
+<body class="multi">
+  <div class="page theme-multi">
+    <div class="card">
+      <div class="hero">
+        <div class="hero-top">
+          <div class="brand">🎵</div>
+          <div class="hero-text">
+            <div class="eyebrow">MUSICUID · HELP MANUAL</div>
+            <div class="title">点歌插件使用指南</div>
+            <div class="subtitle">支持网易云、QQ 音乐、酷狗多平台搜播与扫码登录</div>
+          </div>
+          <div class="pill">v2.0</div>
+        </div>
+      </div>
+
+      <div class="body">
+        <!-- 平台特性徽章 -->
+        <div class="plat-cards">
+          <div class="plat-card netease">
+            <div class="plat-card-title"><span>🔴</span> 网易云音乐</div>
+            <div class="plat-card-desc">支持扫码登录 · VIP音源 · 歌单解析</div>
+          </div>
+          <div class="plat-card qq">
+            <div class="plat-card-title"><span>🟢</span> QQ 音乐</div>
+            <div class="plat-card-desc">支持Cookie导入 · 高清音源 · 链接解析</div>
+          </div>
+          <div class="plat-card kugou">
+            <div class="plat-card-title"><span>🔵</span> 酷狗音乐</div>
+            <div class="plat-card-desc">支持扫码登录 · 试听/完整播放 · 链接解析</div>
+          </div>
+        </div>
+
+        {% for section in data.sections %}
+        <div class="grp p-{{ section.type }}">
+          <div class="grp-head">
+            <div class="grp-dot"></div>
+            <div class="grp-name">{{ section.title }}</div>
+            <div class="grp-count">{{ section.commands|length }} 条指令</div>
+          </div>
+          {% for item in section.commands %}
+          <div class="cmd-item">
+            <div class="cmd-badge">{{ item.cmd }}</div>
+            <div class="cmd-meta">
+              <div class="cmd-desc">{{ item.desc }}</div>
+            </div>
+            {% if item.tag %}
+            <div class="cmd-tag{% if item.tag_type %} {{ item.tag_type }}{% endif %}">{{ item.tag }}</div>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        {% endfor %}
+
+        <div class="tip">
+          💡 <b>提示：</b>在 GsCore 网页控制台（插件配置）中可调整默认平台、搜索条数、语音发送、链接解析及登录白名单。
+        </div>
+
+        <div class="footer">
+          <div>MusicUID · GsCore Multi-platform Music Plugin</div>
+          <div class="brand-name">MusicUID</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

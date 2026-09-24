@@ -16,6 +16,7 @@ from ..utils.provider import SongInfo, get_provider
 from ..musicuid_config import music_config
 
 CARD_TEMPLATE = "song_list.html"
+HELP_TEMPLATE = "help.html"
 
 # 多平台卡片与单平台卡片共用同一模板，只有 hero 主题不同
 MULTI_THEME = "multi"
@@ -199,3 +200,130 @@ async def send_song_list(
         logger.debug("[MusicUID] 卡片渲染不可用，回退纯文本列表")
 
     await bot.send(plain_song_list(keyword, results, play_hint))
+
+
+async def send_help_card(bot: Bot, help_text: str) -> None:
+    """Send help instructions as a rendered image card, falling back to plain text.
+
+    Args:
+        bot: Bot wrapper bound to the current event.
+        help_text: Plain text fallback string.
+    """
+    if music_config.get_config("render_card").data:
+        sections: list[dict[str, object]] = [
+            {
+                "type": "search",
+                "title": "点歌搜索与播放",
+                "commands": [
+                    {
+                        "cmd": "点歌 关键词",
+                        "desc": "搜索并在列表中展示多平台匹配歌曲",
+                        "tag": "搜索",
+                        "tag_type": "",
+                    },
+                    {
+                        "cmd": "点歌 QQ 关键词",
+                        "desc": "临时切换至指定平台（网易/QQ/酷狗）搜索",
+                        "tag": "平台",
+                        "tag_type": "",
+                    },
+                    {
+                        "cmd": "播放 关键词",
+                        "desc": "搜索并直接发送第一首匹配歌曲的音频",
+                        "tag": "播放",
+                        "tag_type": "",
+                    },
+                    {
+                        "cmd": "听N",
+                        "desc": "播放当前搜索列表第 N 首（支持听1、听2等）",
+                        "tag": "选播",
+                        "tag_type": "",
+                    },
+                    {
+                        "cmd": "歌词 关键词",
+                        "desc": "获取并展示指定歌曲的歌词内容",
+                        "tag": "歌词",
+                        "tag_type": "",
+                    },
+                ],
+            },
+            {
+                "type": "login",
+                "title": "扫码登录与凭证管理",
+                "commands": [
+                    {
+                        "cmd": "点歌登录 网易云",
+                        "desc": "扫码登录网易云，自动保存并解锁 VIP 与无损音质",
+                        "tag": "扫码登录",
+                        "tag_type": "vip",
+                    },
+                    {
+                        "cmd": "点歌登录 酷狗",
+                        "desc": "扫码登录酷狗音乐，自动保存 Cookie 凭证",
+                        "tag": "扫码登录",
+                        "tag_type": "vip",
+                    },
+                    {
+                        "cmd": "点歌登录状态",
+                        "desc": "查询网易云、QQ 音乐、酷狗凭据绑定状态",
+                        "tag": "状态查询",
+                        "tag_type": "",
+                    },
+                    {
+                        "cmd": "点歌导入cookie 平台 值",
+                        "desc": "手动绑定指定平台 Cookie 凭证",
+                        "tag": "手动绑定",
+                        "tag_type": "",
+                    },
+                    {
+                        "cmd": "点歌添加白名单 用户ID",
+                        "desc": "授权指定用户使用平台登录功能（主人可用）",
+                        "tag": "主人权限",
+                        "tag_type": "perm",
+                    },
+                    {
+                        "cmd": "点歌删除白名单 用户ID",
+                        "desc": "从登录白名单中移除用户（主人可用）",
+                        "tag": "主人权限",
+                        "tag_type": "perm",
+                    },
+                    {
+                        "cmd": "点歌白名单",
+                        "desc": "查看当前已获得登录授权的白名单用户列表",
+                        "tag": "白名单",
+                        "tag_type": "",
+                    },
+                ],
+            },
+            {
+                "type": "link",
+                "title": "链接解析与配置",
+                "commands": [
+                    {
+                        "cmd": "发送音乐分享链接",
+                        "desc": "自动解析网易云/QQ/酷狗单曲或歌单并播放",
+                        "tag": "自动解析",
+                        "tag_type": "",
+                    },
+                    {
+                        "cmd": "网页控制台配置",
+                        "desc": "设置默认平台、列表条数、语音发送与卡片开关",
+                        "tag": "后台配置",
+                        "tag_type": "",
+                    },
+                ],
+            },
+        ]
+
+        data: dict[str, object] = {
+            "sections": sections,
+        }
+
+        png = await render_card(HELP_TEMPLATE, data)
+        if png is not None:
+            await bot.send(MessageSegment.image(png))
+            return
+        logger.debug("[MusicUID] 帮助卡片渲染不可用，回退纯文本")
+
+    await bot.send(help_text)
+

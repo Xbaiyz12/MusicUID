@@ -989,3 +989,42 @@ def test_login_authorization_and_whitelist(monkeypatch: pytest.MonkeyPatch) -> N
     assert extracted == ["55555", "66666", "77777", "88888", "99999"]
 
 
+def test_help_card_template_render() -> None:
+    from MusicUID.MusicUID.utils.render import _env
+
+    data = {
+        "sections": [
+            {
+                "type": "search",
+                "title": "测试分类",
+                "commands": [
+                    {"cmd": "点歌", "desc": "测试描述", "tag": "标签", "tag_type": "vip"},
+                ],
+            }
+        ]
+    }
+    html = _env.get_template("help.html").render(data=data)
+    assert "MusicUID 帮助菜单" in html
+    assert "点歌插件使用指南" in html
+    assert "测试分类" in html
+    assert "测试描述" in html
+
+
+def test_send_help_card_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    from MusicUID.MusicUID.musicuid_card import send_help_card
+    from MusicUID.MusicUID.musicuid_config import music_config
+
+    sent_messages: list[object] = []
+
+    class MockBot:
+        async def send(self, msg: object) -> None:
+            sent_messages.append(msg)
+
+    # 1. 当 render_card 为 False 时，直接发送纯文本
+    monkeypatch.setattr(music_config, "get_config", lambda name: SimpleNamespace(data=False))
+    bot = MockBot()
+    asyncio.run(send_help_card(bot, "纯文本帮助信息"))
+    assert sent_messages == ["纯文本帮助信息"]
+
+
+
