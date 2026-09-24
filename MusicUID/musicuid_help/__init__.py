@@ -20,10 +20,19 @@ HELP_TEXT = """🎵 MusicUID · 多平台点歌
 听N                播放当前列表第 N 首
 歌词 关键词        查看歌词
 
+【扫码登录与凭证（主人/白名单）】
+点歌登录 网易云    扫码登录网易云（免手动填 Cookie，支持 VIP 与无损）
+点歌登录 酷狗      扫码登录酷狗（免手动填 Cookie）
+点歌登录状态       查看当前三平台的 Cookie 绑定状态
+点歌导入cookie 平台 Cookie值   手动导入指定平台 Cookie
+点歌添加白名单 用户ID   添加用户至登录白名单（主人专用）
+点歌删除白名单 用户ID   从登录白名单移除用户（主人专用）
+点歌白名单         查看当前登录白名单列表
+
 【平台】
 可用平台词：网易 / QQ / 酷狗
-三个平台都支持搜索与音频下发：网易云与 QQ音乐在网页控制台填入 Cookie 后
-可播放 VIP 曲目，酷狗多数曲目免登录即可播放，需单独购买专辑的曲目只能试听
+三个平台都支持搜索与音频下发：网易云与酷狗支持扫码一键登录；
+QQ 音乐在网页控制台填入 Cookie 后可播放会员与高音质曲目。
 
 【链接解析】
 发送网易云 / QQ音乐 / 酷狗的分享链接会自动播放
@@ -34,9 +43,9 @@ HELP_TEXT = """🎵 MusicUID · 多平台点歌
 语音/文件发送、卡片渲染与链接解析开关。"""
 
 
-@sv_help.on_command(HELP_COMMANDS, block=True)
+@sv_help.on_command(HELP_COMMANDS, block=True, to_ai="查看点歌插件帮助文档与指令列表")
 async def send_help(bot: Bot, ev: Event) -> None:
-    """返回插件帮助文本。
+    """返回 MusicUID 插件使用帮助与功能指令清单。
 
     Args:
         bot: Bot wrapper bound to the current event.

@@ -254,6 +254,8 @@ class NeteaseProvider:
             The audio URL, or an empty string when weapi cannot provide one.
         """
         try:
+            from Crypto.Cipher import AES  # noqa: F401
+
             from .netease_crypto import weapi_form, weapi_cookie
         except ImportError as e:
             logger.debug(f"[MusicUID] weapi 不可用（缺 pycryptodome）：{e}")
@@ -274,9 +276,9 @@ class NeteaseProvider:
             }
             try:
                 data = await post_json(WEAPI_PLAY_URL, weapi_form(payload), headers=headers)
-            except MusicRequestError as e:
+            except (MusicRequestError, ImportError, ValueError, Exception) as e:
                 logger.debug(f"[MusicUID] weapi 取流失败（{level}）：{e}")
-                return ""
+                continue
             for raw in get_list(to_obj(data), "data"):
                 url = get_str(to_obj(raw), "url")
                 if url:

@@ -112,19 +112,21 @@ async def _inline_covers(rows: list[dict[str, object]]) -> None:
     Args:
         rows: Template rows produced by :func:`_song_row`, modified in place.
     """
+    sem = asyncio.Semaphore(5)
 
     async def one(row: dict[str, object]) -> None:
         url = row.get("cover")
         if not isinstance(url, str) or not url.startswith("http"):
             return
-        try:
-            resp = await get_client().get(url)
-            resp.raise_for_status()
-            mime = resp.headers.get("content-type", "image/jpeg").split(";")[0]
-            row["cover"] = f"data:{mime};base64,{base64.b64encode(resp.content).decode()}"
-        except Exception as e:  # noqa: BLE001
-            logger.debug(f"[MusicUID] 封面内联失败（{url[:60]}）：{e}")
-            row["cover"] = ""
+        async with sem:
+            try:
+                resp = await get_client().get(url, timeout=3.0)
+                resp.raise_for_status()
+                mime = resp.headers.get("content-type", "image/jpeg").split(";")[0]
+                row["cover"] = f"data:{mime};base64,{base64.b64encode(resp.content).decode()}"
+            except Exception as e:  # noqa: BLE001
+                logger.debug(f"[MusicUID] 封面内联失败（{url[:60]}）：{e}")
+                row["cover"] = ""
 
     await asyncio.gather(*(one(row) for row in rows))
 

@@ -165,7 +165,7 @@ async def deliver_audio(
         logger.warning(f"[MusicUID] 音频下载失败：{e}")
         return "音频下载失败，可能该歌曲无版权或接口受限"
 
-    audio_path.write_bytes(payload)
+    await asyncio.to_thread(audio_path.write_bytes, payload)
     # 无版权曲目的外链只返回很小的占位响应，不该当成歌曲下发
     if len(payload) < MIN_AUDIO_BYTES:
         audio_path.unlink(missing_ok=True)

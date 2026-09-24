@@ -11,17 +11,17 @@
       width: fit-content;
       height: fit-content;
       background: #f6f6f8 !important;
-      font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+      font-family: "MiSans", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
       color: #2b2b33;
       -webkit-font-smoothing: antialiased;
       text-rendering: geometricPrecision;
     }
 
     /* hero 主题：单平台用该平台色，多平台用中性紫 */
-    body.multi   { --c1: #7b6ce0; --c2: #4c3fa8; --c: #6b5bd2; --soft: #efedfd; }
-    body.netease { --c1: #f0605a; --c2: #d63333; --c: #ec4141; --soft: #fdeeee; }
-    body.qq      { --c1: #3fd18d; --c2: #189c5c; --c: #31c27c; --soft: #e9f9f1; }
-    body.kugou   { --c1: #5cb9f8; --c2: #1c7fce; --c: #2ca2f9; --soft: #e8f4fd; }
+    .theme-multi   { --c1: #7b6ce0; --c2: #4c3fa8; --c: #6b5bd2; --soft: #efedfd; }
+    .theme-netease { --c1: #f0605a; --c2: #d63333; --c: #ec4141; --soft: #fdeeee; }
+    .theme-qq      { --c1: #3fd18d; --c2: #189c5c; --c: #31c27c; --soft: #e9f9f1; }
+    .theme-kugou   { --c1: #5cb9f8; --c2: #1c7fce; --c: #2ca2f9; --soft: #e8f4fd; }
 
     /* 分组内各平台自己的强调色 */
     .grp.p-netease { --gc: #ec4141; --gsoft: #fdeeee; --gline: rgba(236, 65, 65, 0.18); }
@@ -48,9 +48,9 @@
       background: linear-gradient(135deg, #7b6ce0 0%, #4c3fa8 100%);
     }
 
-    body.netease .hero { background: linear-gradient(135deg, #f0605a 0%, #d63333 100%); }
-    body.qq .hero      { background: linear-gradient(135deg, #3fd18d 0%, #189c5c 100%); }
-    body.kugou .hero   { background: linear-gradient(135deg, #5cb9f8 0%, #1c7fce 100%); }
+    .theme-netease .hero, body.netease .hero { background: linear-gradient(135deg, #f0605a 0%, #d63333 100%); }
+    .theme-qq .hero, body.qq .hero           { background: linear-gradient(135deg, #3fd18d 0%, #189c5c 100%); }
+    .theme-kugou .hero, body.kugou .hero     { background: linear-gradient(135deg, #5cb9f8 0%, #1c7fce 100%); }
 
     .hero-top { display: flex; align-items: flex-start; gap: 14px; }
 
@@ -257,7 +257,7 @@
   </style>
 </head>
 <body class="{{ data.theme }}">
-  <div class="page">
+  <div class="page theme-{{ data.theme }}">
     <div class="card">
       <div class="hero">
         <div class="hero-top">

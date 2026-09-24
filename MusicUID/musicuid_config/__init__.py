@@ -2,7 +2,13 @@
 
 from typing import Dict
 
-from gsuid_core.utils.plugins_config.models import GSC, GsIntConfig, GsStrConfig, GsBoolConfig
+from gsuid_core.utils.plugins_config.models import (
+    GSC,
+    GsIntConfig,
+    GsStrConfig,
+    GsBoolConfig,
+    GsListStrConfig,
+)
 from gsuid_core.utils.plugins_config.gs_config import StringConfig
 
 from ..utils.resource.RESOURCE_PATH import CONFIG_PATH
@@ -13,6 +19,11 @@ CONFIG_DEFAULT: Dict[str, GSC] = {
         "点歌未指定平台时使用的音乐平台",
         "netease",
         options=["netease", "qq", "kugou"],
+    ),
+    "login_whitelist": GsListStrConfig(
+        "登录权限白名单",
+        "允许扫码登录与配置凭据的用户 ID 列表（主人默认拥有全部权限，无需在此额外添加）",
+        [],
     ),
     "netease_cookie": GsStrConfig(
         "网易云 Cookie",

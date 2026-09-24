@@ -138,7 +138,7 @@ async def play_song(bot: Bot, song: SongInfo) -> None:
         await bot.send(reason)
 
 
-@sv_song_request.on_command(("点歌", "搜歌", "搜索歌曲"))
+@sv_song_request.on_command(("点歌", "搜歌", "搜索歌曲"), to_ai="搜索指定歌曲并返回音乐卡片列表")
 async def song_request(bot: Bot, ev: Event) -> None:
     """搜索歌曲并列出结果：未指定平台时三平台并发搜索。
 
@@ -161,7 +161,7 @@ async def song_request(bot: Bot, ev: Event) -> None:
     await send_song_list(bot, keyword, results, "听1")
 
 
-@sv_song_request.on_command(("播放", "点播"))
+@sv_song_request.on_command(("播放", "点播"), to_ai="搜索指定歌曲并直接播放第一首")
 async def song_play(bot: Bot, ev: Event) -> None:
     """搜索并直接播放第一首结果。
 
@@ -185,9 +185,9 @@ async def song_play(bot: Bot, ev: Event) -> None:
     await play_song(bot, songs[0])
 
 
-@sv_song_pick.on_regex(r"^听\s*(?P<index>\d+)$", block=True)
+@sv_song_pick.on_regex(r"^听\s*(?P<index>\d+)$", block=True, to_ai="播放点歌列表中的指定序号歌曲")
 async def song_pick(bot: Bot, ev: Event) -> None:
-    """播放当前列表中的第 N 首。
+    """播放当前列表中的第 N 首歌曲。
 
     Args:
         bot: Bot wrapper bound to the current event.
@@ -204,9 +204,9 @@ async def song_pick(bot: Bot, ev: Event) -> None:
     await play_song(bot, session.songs[index - 1])
 
 
-@sv_song_lyric.on_command("歌词")
+@sv_song_lyric.on_command("歌词", to_ai="查询指定歌曲的歌词文本")
 async def song_lyric(bot: Bot, ev: Event) -> None:
-    """查询并返回歌曲歌词。
+    """查询并返回指定歌曲的歌词文本。
 
     Args:
         bot: Bot wrapper bound to the current event.

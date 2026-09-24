@@ -20,6 +20,7 @@ RELEASE_TIMEOUT_SEC = 10
 INSTALL_TIMEOUT_SEC = 900
 
 _RENDER_PACKAGE = "playwright"
+_background_tasks: set[asyncio.Task[None]] = set()
 
 
 def clean_temp_files() -> int:
@@ -118,7 +119,9 @@ async def prepare_render_env() -> None:
         logger.info("[MusicUID] 浏览器渲染可用，图片卡片就绪")
         return
     logger.info("[MusicUID] 浏览器渲染也不可用，将在后台自动下载 Chromium")
-    asyncio.create_task(install_render_deps())
+    task = asyncio.create_task(install_render_deps())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 
 @on_core_shutdown

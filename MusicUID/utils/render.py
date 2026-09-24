@@ -24,9 +24,9 @@ IDLE_TIMEOUT_MS = 8000
 SETTLE_MS = 50
 CHROME_ARGS = ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
 
-# 卡片模板里 .card 的 CSS 宽；pytakumi 的 root_max_width 必须等于它，
-# 否则 dpr>1 时框架会把设备像素宽写进根容器，右侧内容被裁掉。
-CARD_CSS_WIDTH = 560
+# 卡片模板里 .page 的 CSS 宽（.card 560px + 左右 padding 16px*2 = 592px）；
+# pytakumi 的 root_max_width 必须等于它，否则内容右侧会被裁切。
+CARD_CSS_WIDTH = 592
 
 _HINT = (
     "卡片渲染不可用：请在 GsCore 的 Python 环境执行 pip install playwright 与 "
@@ -193,6 +193,8 @@ async def _render_pytakumi(html: str) -> bytes | None:
             dpi=192,
             root_max_width=CARD_CSS_WIDTH,
             default_font_size=14,
+            font_name="MiSans, Microsoft YaHei UI, sans-serif",
+            lang="zh",
         )
     except Exception as e:
         logger.debug(f"[MusicUID] pytakumi 渲染失败，改用浏览器渲染：{e}")

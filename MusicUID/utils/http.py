@@ -42,6 +42,24 @@ async def close_client() -> None:
         await client.aclose()
 
 
+def _clean_url_for_log(url: str) -> str:
+    """Strip sensitive query params from URL for safe logging/error messages."""
+    try:
+        from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
+        parsed = urlparse(url)
+        if not parsed.query:
+            return url
+        params = []
+        for k, v in parse_qsl(parsed.query, keep_blank_values=True):
+            if k.lower() in {"token", "userid", "cookie", "key", "password", "signature", "auth"}:
+                params.append((k, "***"))
+            else:
+                params.append((k, v))
+        return urlunparse(parsed._replace(query=urlencode(params)))
+    except Exception:
+        return url.split("?")[0]
+
+
 async def get_json(
     url: str,
     params: dict[str, str | int] | None = None,
@@ -64,11 +82,13 @@ async def get_json(
         res = await get_client().get(url, params=params, headers=headers)
         res.raise_for_status()
     except httpx.HTTPError as e:
-        raise MusicRequestError(f"请求失败（{url}）：{e}") from e
+        safe_url = _clean_url_for_log(str(e.request.url if hasattr(e, "request") and e.request else url))
+        raise MusicRequestError(f"请求失败（{safe_url}）：{type(e).__name__}") from e
     try:
         return res.json()
     except ValueError as e:
-        raise MusicRequestError(f"接口返回了非 JSON 数据（{url}）") from e
+        safe_url = _clean_url_for_log(url)
+        raise MusicRequestError(f"接口返回了非 JSON 数据（{safe_url}）") from e
 
 
 async def post_json(
@@ -98,11 +118,13 @@ async def post_json(
             res = await get_client().post(url, data=dict(data), headers=headers)
         res.raise_for_status()
     except httpx.HTTPError as e:
-        raise MusicRequestError(f"请求失败（{url}）：{e}") from e
+        safe_url = _clean_url_for_log(str(e.request.url if hasattr(e, "request") and e.request else url))
+        raise MusicRequestError(f"请求失败（{safe_url}）：{type(e).__name__}") from e
     try:
         return res.json()
     except ValueError as e:
-        raise MusicRequestError(f"接口返回了非 JSON 数据（{url}）") from e
+        safe_url = _clean_url_for_log(url)
+        raise MusicRequestError(f"接口返回了非 JSON 数据（{safe_url}）") from e
 
 
 async def get_text(

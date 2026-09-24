@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections import OrderedDict
 from dataclasses import field, dataclass
 
 from gsuid_core.models import Event
@@ -11,6 +12,8 @@ from ..utils.provider import SongInfo
 
 # 列表有效期：与原插件一致，10 分钟内可继续选歌
 SESSION_TTL_SEC = 600
+# 最大会话容量，防止群多长期运行内存泄漏
+MAX_SESSION_COUNT = 500
 
 
 @dataclass
@@ -30,7 +33,7 @@ class SongListSession:
     created_at: float = 0.0
 
 
-_sessions: dict[str, SongListSession] = {}
+_sessions: OrderedDict[str, SongListSession] = OrderedDict()
 
 
 def session_key(ev: Event) -> str:
@@ -54,7 +57,13 @@ def save_session(ev: Event, platform: str, keyword: str, songs: list[SongInfo]) 
         keyword: Keyword that produced the list.
         songs: The results, in display order.
     """
-    _sessions[session_key(ev)] = SongListSession(
+    key = session_key(ev)
+    if key in _sessions:
+        _sessions.pop(key)
+    elif len(_sessions) >= MAX_SESSION_COUNT:
+        _sessions.popitem(last=False)
+
+    _sessions[key] = SongListSession(
         platform=platform,
         keyword=keyword,
         songs=songs,
@@ -71,10 +80,12 @@ def get_session(ev: Event) -> SongListSession | None:
     Returns:
         The cached list, or ``None`` when missing or expired.
     """
-    session = _sessions.get(session_key(ev))
+    key = session_key(ev)
+    session = _sessions.get(key)
     if session is None:
         return None
     if time.monotonic() - session.created_at > SESSION_TTL_SEC:
-        _sessions.pop(session_key(ev), None)
+        _sessions.pop(key, None)
         return None
+    _sessions.move_to_end(key)
     return session

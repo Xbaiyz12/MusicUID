@@ -895,3 +895,97 @@ def test_prepare_render_env_skips_when_disabled(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(lifecycle_module, "render_ready", fake_ready)
     asyncio.run(lifecycle_module.prepare_render_env())
     assert probed == []
+
+
+# ---------------------------------------------------------------- 登录与凭据测试
+
+
+def test_make_qr_image() -> None:
+    from MusicUID.MusicUID.utils.login.base import make_qr_image
+
+    qr_bytes = make_qr_image("https://music.163.com")
+    assert isinstance(qr_bytes, bytes)
+    assert len(qr_bytes) > 0
+    # PNG 图片文件头魔数
+    assert qr_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+@pytest.mark.parametrize(
+    ("name", "expected_platform"),
+    [
+        ("网易云", "netease"),
+        ("163", "netease"),
+        ("netease", "netease"),
+        ("酷狗", "kugou"),
+        ("kg", "kugou"),
+        ("kugou", "kugou"),
+        ("qq", "qq"),
+        ("QQ", "qq"),
+        ("QQ音乐", "qq"),
+    ],
+)
+def test_get_login_provider(name: str, expected_platform: str) -> None:
+    from MusicUID.MusicUID.utils.login import get_login_provider
+
+    provider = get_login_provider(name)
+    assert provider is not None
+    assert provider.platform_name == expected_platform
+
+
+def test_qq_cookie_parser_and_format() -> None:
+    from MusicUID.MusicUID.utils.login.qqmusic import parse_qq_cookie, format_qq_cookie
+
+    raw = "uin=123456789; qm_keyst=Q_H_L_abc; pgv_pvid=987654; random_field=xyz"
+    parsed = parse_qq_cookie(raw)
+    assert parsed["uin"] == "123456789"
+    assert parsed["qm_keyst"] == "Q_H_L_abc"
+
+    formatted = format_qq_cookie(raw)
+    assert "uin=123456789" in formatted
+    assert "qm_keyst=Q_H_L_abc" in formatted
+    assert "pgv_pvid" not in formatted
+
+
+def test_kugou_signature_web_params() -> None:
+    from MusicUID.MusicUID.utils.login.kugou import _signature_web_params
+
+    params = {"appid": 1014, "plat": 4, "srcappid": 2919}
+    sig = _signature_web_params(params)
+    assert isinstance(sig, str)
+    assert len(sig) == 32
+    assert sig == _signature_web_params(params)  # 确定性
+
+
+def test_login_authorization_and_whitelist(monkeypatch: pytest.MonkeyPatch) -> None:
+    from MusicUID.MusicUID.musicuid_login import is_master, _extract_user_ids, is_login_authorized
+    from MusicUID.MusicUID.musicuid_config import music_config
+
+    # 1. 主人直接通过（user_pm <= 1）
+    ev_master = Event(user_id="10001", user_pm=1)
+    ev_console = Event(user_id="10000", user_pm=0)
+    assert is_master(ev_master) is True
+    assert is_login_authorized(ev_master) is True
+    assert is_login_authorized(ev_console) is True
+
+    # 2. 普通用户且不在白名单 -> 拒绝
+    ev_normal = Event(user_id="20002", user_pm=6)
+    monkeypatch.setattr(music_config, "get_config", lambda name: SimpleNamespace(data=[]))
+    assert is_master(ev_normal) is False
+    assert is_login_authorized(ev_normal) is False
+
+    # 3. 普通用户在白名单 -> 通过
+    monkeypatch.setattr(music_config, "get_config", lambda name: SimpleNamespace(data=["20002", "30003"]))
+    assert is_login_authorized(ev_normal) is True
+
+    # 4. 用户提取解析（含 at、at_list 与文本）
+    ev_extract = Event(
+        user_id="10001",
+        user_pm=1,
+        at="55555",
+        at_list=["66666", "77777"],
+        text="88888 99999",
+    )
+    extracted = _extract_user_ids(ev_extract)
+    assert extracted == ["55555", "66666", "77777", "88888", "99999"]
+
+
