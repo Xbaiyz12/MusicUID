@@ -1108,14 +1108,21 @@ def test_handle_login_direct_trigger(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(sent_messages) >= 1
     assert "手机扫码一键登录" in str(sent_messages[0])
 
-    # 2. 发送 "网易云登录" (command 为 网易云登录, text 为 "") -> 发起扫码流程
+    # 2. 发送 "酷狗登录" (command 为 酷狗登录, text 为 "") -> 发起扫码流程
+    sent_messages.clear()
+    ev_kg = Event(user_id="10001", user_pm=1, command="酷狗登录", text="")
+    asyncio.run(handle_login(bot, ev_kg))
+    assert len(sent_messages) >= 1
+    assert "正在生成【酷狗音乐】登录二维码" in str(sent_messages[0])
+
+    # 3. 发送 "网易云登录" -> 引导使用 Cookie 绑定
     sent_messages.clear()
     ev_wyy = Event(user_id="10001", user_pm=1, command="网易云登录", text="")
     asyncio.run(handle_login(bot, ev_wyy))
     assert len(sent_messages) >= 1
-    assert "正在生成【网易云音乐】登录二维码" in str(sent_messages[0])
+    assert "网易云音乐 Cookie 获取指引" in str(sent_messages[0])
 
-    # 3. 发送 "QQ登录" -> 输出 QQ 音乐配置教程
+    # 4. 发送 "QQ登录" -> 输出 QQ 音乐配置教程
     sent_messages.clear()
     ev_qq = Event(user_id="10001", user_pm=1, command="QQ登录", text="")
     asyncio.run(handle_login(bot, ev_qq))

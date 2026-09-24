@@ -252,10 +252,16 @@ async def send_help_card(bot: Bot, help_text: str) -> None:
                 "title": "扫码登录与凭证管理",
                 "commands": [
                     {
-                        "cmd": "网易云登录 / 酷狗登录",
-                        "desc": "手机扫码一键登录网易云/酷狗，解锁 VIP 歌曲与无损音质",
+                        "cmd": "酷狗登录 / 点歌登录 酷狗",
+                        "desc": "手机酷狗扫码一键登录，解锁 VIP 歌曲与完整音质",
                         "tag": "扫码登录",
                         "tag_type": "vip",
+                    },
+                    {
+                        "cmd": "网易云cookie <MUSIC_U值>",
+                        "desc": "快捷导入网易云音乐 Cookie（发送「网易云cookie」看教程）",
+                        "tag": "快捷导入",
+                        "tag_type": "",
                     },
                     {
                         "cmd": "QQ音乐cookie <Cookie值>",

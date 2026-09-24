@@ -33,15 +33,13 @@ QQ_COOKIE_GUIDE = (
     "3. 复制输出内容中的 uin 与 qm_keyst 项；\n"
     "4. 对机器人发送以下指令即可完成绑定：\n"
     "   👉 QQ音乐cookie uin=你的QQ号; qm_keyst=你的密钥值\n\n"
-    "💡 网易云与酷狗支持免填 Cookie 扫码登录：\n"
-    "• 发送【网易云登录】或【点歌登录 网易云】\n"
-    "• 发送【酷狗登录】或【点歌登录 酷狗】"
+    "💡 酷狗音乐支持手机扫码一键登录：\n"
+    "• 发送【酷狗登录】或【点歌登录 酷狗】即可获取二维码扫码登录！"
 )
 
 NETEASE_COOKIE_GUIDE = (
     "【网易云音乐 Cookie 获取指引】\n\n"
-    "由于网易云官方近期升级了扫码风控策略（部分账号或异地 IP 扫码时提示「请切换其他登录方式或升级新版本」），"
-    "建议直接提取账号凭证 `MUSIC_U` 进行绑定：\n\n"
+    "由于网易云官方升级了严格的风控策略（第三方扫码已被官方拦截），请直接提取 `MUSIC_U` Cookie 进行绑定：\n\n"
     "📌 获取步骤：\n"
     "1. 电脑浏览器访问网易云官网：https://music.163.com 并登录账号；\n"
     "2. 按 F12 打开开发者工具，点击【应用】/【Application】或【存储】选项卡；\n"
@@ -55,10 +53,10 @@ NETEASE_COOKIE_GUIDE = (
 LOGIN_MENU = (
     "🎵【MusicUID 音乐平台登录与凭据配置】\n\n"
     "【📱 手机扫码一键登录（免提取 Cookie）】\n"
-    "• 网易云音乐：发送「网易云登录」或「点歌登录 网易云」\n"
-    "• 酷狗音乐：发送「酷狗登录」或「点歌登录 酷狗」\n\n"
-    "【🔑 Cookie 快捷配置】\n"
-    "• QQ 音乐：发送「QQ音乐cookie <值>」（发送「QQ音乐cookie」可查看教程）\n"
+    "• 酷狗音乐：发送「酷狗登录」或「点歌登录 酷狗」（支持手机酷狗扫码秒登）\n\n"
+    "【🔑 浏览器 Cookie 导入（网易云 / QQ 音乐）】\n"
+    "• 网易云音乐：发送「网易云cookie <MUSIC_U值>」（发送「网易云cookie」看指引）\n"
+    "• QQ 音乐：发送「QQ音乐cookie <值>」（发送「QQ音乐cookie」看教程）\n"
     "• 通用设置：发送「设置cookie <平台> <值>」\n\n"
     "【📋 凭证状态与白名单】\n"
     "• 状态查询：发送「点歌状态」或「点歌登录状态」\n"
@@ -368,8 +366,8 @@ async def handle_login(bot: Bot, ev: Event) -> None:
         await bot.send(LOGIN_MENU)
         return
 
-    # 2. 判断目标平台
-    target_platform = "netease"
+    # 2. 判断目标平台（默认扫码平台为酷狗 kugou）
+    target_platform = "kugou"
     if "酷狗" in cmd or "kugou" in raw_text or "kg" in raw_text:
         target_platform = "kugou"
     elif "qq" in cmd or "qq" in raw_text:
@@ -389,7 +387,16 @@ async def handle_login(bot: Bot, ev: Event) -> None:
         await bot.send(QQ_COOKIE_GUIDE)
         return
 
-    # 3. 创建网易云/酷狗扫码会话
+    # 网易云官方已对第三方 Web 扫码接口实施强风控拦截（状态码 882），引导直接使用 Cookie 绑定
+    if provider.platform_name == "netease":
+        await bot.send(
+            "⚠️【网易云音乐】官方近期已关闭并拦截第三方扫码登录（APP 扫码会提示升级或切换登录方式）。\n\n"
+            "💡 建议通过网页端提取 `MUSIC_U` 直接导入绑定（仅需 10 秒）：\n"
+            + NETEASE_COOKIE_GUIDE
+        )
+        return
+
+    # 3. 创建酷狗扫码会话
     await bot.send(f"正在生成【{provider.display_name}】登录二维码，请稍候...")
     session = await provider.create_qr_session()
 
