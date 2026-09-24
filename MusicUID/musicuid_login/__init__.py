@@ -38,6 +38,20 @@ QQ_COOKIE_GUIDE = (
     "• 发送【酷狗登录】或【点歌登录 酷狗】"
 )
 
+NETEASE_COOKIE_GUIDE = (
+    "【网易云音乐 Cookie 获取指引】\n\n"
+    "由于网易云官方近期升级了扫码风控策略（部分账号或异地 IP 扫码时提示「请切换其他登录方式或升级新版本」），"
+    "建议直接提取账号凭证 `MUSIC_U` 进行绑定：\n\n"
+    "📌 获取步骤：\n"
+    "1. 电脑浏览器访问网易云官网：https://music.163.com 并登录账号；\n"
+    "2. 按 F12 打开开发者工具，点击【应用】/【Application】或【存储】选项卡；\n"
+    "3. 在左侧展开【Cookie】-> 点击「https://music.163.com」；\n"
+    "4. 在右侧列表中找到名为 `MUSIC_U` 的项，复制其【值】（通常是一串长字母数字组合）；\n"
+    "5. 回到群聊/私聊发送：\n"
+    "   👉 网易云cookie 你的值\n"
+    "   （例如：网易云cookie 00b08a...）"
+)
+
 LOGIN_MENU = (
     "🎵【MusicUID 音乐平台登录与凭据配置】\n\n"
     "【📱 手机扫码一键登录（免提取 Cookie）】\n"
@@ -271,14 +285,15 @@ async def handle_set_cookie(bot: Bot, ev: Event) -> None:
 
     if cmd in ("网易云cookie", "网易cookie"):
         if not raw_text:
-            await bot.send(
-                "💡 提示：网易云支持扫码免填 Cookie，建议直接发送「网易云登录」！\n"
-                "如需手动绑定请发送：网易云cookie <你的Cookie值>"
-            )
+            await bot.send(NETEASE_COOKIE_GUIDE)
             return
-        music_config.set_config("netease_cookie", raw_text)
+        # 兼容用户直接粘贴 MUSIC_U 或包含 MUSIC_U=xxx 的长字符串
+        cookie_to_save = raw_text
+        if "MUSIC_U=" not in cookie_to_save and "=" not in cookie_to_save:
+            cookie_to_save = f"MUSIC_U={cookie_to_save}"
+        music_config.set_config("netease_cookie", cookie_to_save)
         logger.info("[MusicUID] 已成功更新网易云音乐 Cookie")
-        await bot.send("✅ 已成功更新【网易云音乐】Cookie 凭据！")
+        await bot.send(f"✅ 已成功更新【网易云音乐】Cookie 凭据！\n已生效凭证：\n{_mask_cookie(cookie_to_save)}")
         return
 
     if cmd == "酷狗cookie":
@@ -436,7 +451,16 @@ async def _poll_login_status(
 
         elif session.status == LoginStatus.FAILED:
             logger.warning(f"[MusicUID] {provider.display_name} 登录失败：{session.message}")
-            await bot.send(f"❌【{provider.display_name}】登录失败：{session.message}")
+            if provider.platform_name == "netease":
+                await bot.send(
+                    f"❌【网易云音乐】扫码登录失败：{session.message}\n\n"
+                    "💡 原因排查与解决建议：\n"
+                    "• 网易云官方近期对第三方扫码接口加强了风控策略（异地 IP、非常用设备或未绑定手机可能被拦截）；\n"
+                    "• 建议直接提取 `MUSIC_U` Cookie 凭据导入：\n"
+                    "  发送「网易云cookie」查看极简获取教程，或直接发送「网易云cookie 你的MUSIC_U值」完成绑定。"
+                )
+            else:
+                await bot.send(f"❌【{provider.display_name}】登录失败：{session.message}")
             return
 
     logger.info(f"[MusicUID] {provider.display_name} 扫码轮询超时结束")
