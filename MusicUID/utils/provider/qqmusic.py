@@ -6,9 +6,11 @@ from typing import Final
 from gsuid_core.logger import logger
 
 from .base import SongInfo, SongCollection
+from .custom_api import resolve_custom_api
 from ..http import get_json, post_json
 from ..json_tools import to_obj, get_int, get_obj, get_str, get_list, join_names
 from ...musicuid_config import music_config
+from ..login.qqmusic import load_qq_credential, is_credential_expiring, refresh_qq_credential
 
 # musicu.fcg 同时承担搜索与取流；旧的 client_search_cp 已被腾讯关闭（一律返回 HTTP 500）
 MUSICU_URL: Final[str] = "https://u.y.qq.com/cgi-bin/musicu.fcg"
@@ -26,7 +28,16 @@ QUALITY_TIERS: Final[tuple[tuple[str, str], ...]] = (("M800", "mp3"), ("C400", "
 LOGIN_REQUIRED: Final[int] = 104003
 
 
-def _cookie_headers() -> dict[str, str]:
+async def _ensure_active_cookie() -> str:
+    """确保 QQ 音乐凭据处于有效状态（若临近过期则自动触发静默续期）。"""
+    cred = load_qq_credential()
+    if cred is not None and is_credential_expiring(cred):
+        logger.info("[MusicUID] QQ 音乐移动凭据临近过期，点歌调用前自动触发静默续签...")
+        await refresh_qq_credential(cred)
+    return music_config.get_config("qqmusic_cookie").data
+
+
+async def _cookie_headers() -> dict[str, str]:
     """Build request headers, attaching the login cookie when configured.
 
     QQ音乐对未登录请求很苛刻：搜索会直接返回空列表，取流一律回 ``104003``，
@@ -36,7 +47,7 @@ def _cookie_headers() -> dict[str, str]:
         Header dictionary with ``Referer`` and, when available, ``Cookie``.
     """
     headers = dict(HEADERS)
-    cookie = music_config.get_config("qqmusic_cookie").data
+    cookie = await _ensure_active_cookie()
     if cookie:
         headers["Cookie"] = cookie
     return headers
@@ -66,6 +77,7 @@ class QqMusicProvider:
         Raises:
             MusicRequestError: The platform request failed.
         """
+        headers = await _cookie_headers()
         payload = await post_json(
             MUSICU_URL,
             {
@@ -82,7 +94,7 @@ class QqMusicProvider:
                     },
                 },
             },
-            headers=_cookie_headers(),
+            headers=headers,
             as_json=True,
         )
         song_node = get_obj(get_obj(get_obj(get_obj(to_obj(payload), "req"), "data"), "body"), "song")
@@ -130,7 +142,8 @@ class QqMusicProvider:
             "outCharset": "utf-8",
         }
         params["songid" if song_id.isdigit() else "songmid"] = song_id
-        payload = await get_json(DETAIL_URL, params=params, headers=_cookie_headers())
+        headers = await _cookie_headers()
+        payload = await get_json(DETAIL_URL, params=params, headers=headers)
         for raw in get_list(to_obj(payload), "data"):
             item = to_obj(raw)
             song_mid = get_str(item, "mid")
@@ -191,7 +204,13 @@ class QqMusicProvider:
         Raises:
             MusicRequestError: The platform request failed.
         """
-        headers = _cookie_headers()
+        priority = music_config.get_config("custom_api_priority").data
+        if priority == "custom_first":
+            custom_res = await resolve_custom_api(song)
+            if custom_res:
+                return custom_res
+
+        headers = await _cookie_headers()
         cookie = headers.get("Cookie", "")
         uin = "0"
         if cookie:
@@ -231,4 +250,12 @@ class QqMusicProvider:
                 return f"{hosts[0]}{purl}"
             result = get_int(infos[0], "result") if infos else "none"
             logger.debug(f"[MusicUID] QQ音乐 {suffix} 档未下发 {song.name}：result={result}")
+
+        # 官方接口未下发有效直链（如 VIP 受限或无权播放）时，自动触发自建微服务兜底
+        if priority != "custom_first":
+            custom_res = await resolve_custom_api(song)
+            if custom_res:
+                logger.info(f"[MusicUID] 官方未下发 QQ 音乐《{song.name}》，触发自建 API 兜底取流")
+                return custom_res
+
         return ""

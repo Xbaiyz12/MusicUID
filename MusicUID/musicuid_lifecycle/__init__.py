@@ -6,6 +6,7 @@ import sys
 import asyncio
 import importlib.util
 
+from gsuid_core.aps import scheduler
 from gsuid_core.logger import logger
 from gsuid_core.server import on_core_start, on_core_shutdown
 
@@ -13,6 +14,7 @@ from ..utils.http import close_client
 from ..utils.render import render_ready, close_browser
 from ..musicuid_config import music_config
 from ..utils.resource.RESOURCE_PATH import TEMP_PATH
+from ..utils.login import auto_refresh_qq_job
 
 # 单个释放动作的等待上限，避免拖住进程退出
 RELEASE_TIMEOUT_SEC = 10
@@ -107,7 +109,16 @@ def pytakumi_available() -> bool:
 
 @on_core_start
 async def prepare_render_env() -> None:
-    """启动时检测渲染环境，只在缺 pytakumi 时才去补浏览器回退（不阻塞启动）。"""
+    """启动时检测渲染环境，并登记 QQ 音乐凭证定时保活任务。"""
+    scheduler.add_job(
+        auto_refresh_qq_job,
+        "interval",
+        hours=12,
+        id="musicuid_auto_refresh_qq",
+        replace_existing=True,
+    )
+    logger.info("[MusicUID] 已登记 QQ 音乐移动端凭证定时巡检与自动续签任务（每12小时）")
+
     if pytakumi_available():
         logger.info("[MusicUID] 卡片渲染就绪（pytakumi，无需浏览器）")
         return

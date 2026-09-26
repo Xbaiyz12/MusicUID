@@ -91,6 +91,25 @@ CONFIG_DEFAULT: Dict[str, GSC] = {
     ),
     "voice_bitrate": GsIntConfig("语音压缩码率", "压缩时使用的 mp3 码率（kbps），越低体积越小", 64, 320),
     "keep_temp_sec": GsIntConfig("临时文件保留", "音频与卡片临时文件保留秒数", 60, 600),
+    "custom_api_url": GsStrConfig(
+        "自建/第三方音源API",
+        "填入自建 QQMusicApi / 音源微服务地址（如 http://127.0.0.1:3300 或支持占位符的接口 URL）；"
+        "留空则默认仅使用官方原生/移动端协议取流",
+        "",
+    ),
+    "custom_api_priority": GsStrConfig(
+        "自建API优先级",
+        "fallback_only: 优先官方直链/移动长效凭据，受限/无VIP时自动回退自建API；"
+        "custom_first: 优先调用自建API解析，失败时回退官方接口",
+        "fallback_only",
+        options=["fallback_only", "custom_first"],
+    ),
+    "custom_api_token": GsStrConfig(
+        "自建API认证Token",
+        "自建服务若启用了 Authorization 密钥鉴权可在此填写；未开启鉴权请留空",
+        "",
+        secret=True,
+    ),
 }
 
 music_config = StringConfig("MusicUID", CONFIG_PATH, CONFIG_DEFAULT)

@@ -16,7 +16,10 @@ from ..utils.login import (
     BaseLoginProvider,
     format_qq_cookie,
     get_login_provider,
+    load_qq_credential,
+    refresh_qq_credential,
 )
+from ..utils.provider.custom_api import test_custom_api_connection
 from ..musicuid_config import music_config
 
 # 优先级设为 2，优先于通用搜索指令 (priority=5) 匹配
@@ -52,11 +55,17 @@ NETEASE_COOKIE_GUIDE = (
 
 LOGIN_MENU = (
     "🎵【MusicUID 音乐平台登录与凭据配置】\n\n"
-    "【📱 手机扫码一键登录（免提取 Cookie）】\n"
-    "• 酷狗音乐：发送「酷狗登录」或「点歌登录 酷狗」（支持手机酷狗扫码秒登）\n\n"
-    "【🔑 浏览器 Cookie 导入（网易云 / QQ 音乐）】\n"
+    "【📱 手机扫码一键登录（方案一：移动端长效保活）】\n"
+    "• QQ 音乐：发送「QQ登录」或「点歌登录 qq」（手机QQ扫码，支持长效自动续期）\n"
+    "• 酷狗音乐：发送「酷狗登录」或「点歌登录 酷狗」（手机酷狗扫码秒登）\n\n"
+    "【🌐 自建音源服务（方案五：自建 QQMusicApi / 微服务）】\n"
+    "• 设置自建服务：发送「设置自建api <URL>」或「自建api <URL>」\n"
+    "• 切换调度优先级：发送「自建api模式 fallback」或「自建api模式 first」\n"
+    "• 连通性测试：发送「测试自建api」\n\n"
+    "【🔑 浏览器 Cookie 导入 / 刷新】\n"
+    "• QQ 音乐手动刷新：发送「QQ音乐刷新」或「点歌刷新 qq」\n"
     "• 网易云音乐：发送「网易云cookie <MUSIC_U值>」（发送「网易云cookie」看指引）\n"
-    "• QQ 音乐：发送「QQ音乐cookie <值>」（发送「QQ音乐cookie」看教程）\n"
+    "• QQ 音乐手动导入：发送「QQ音乐cookie <值>」（发送「QQ音乐cookie」看教程）\n"
     "• 通用设置：发送「设置cookie <平台> <值>」\n\n"
     "【📋 凭证状态与白名单】\n"
     "• 状态查询：发送「点歌状态」或「点歌登录状态」\n"
@@ -227,17 +236,182 @@ async def check_login_status(bot: Bot, ev: Event) -> None:
     netease_ck = music_config.get_config("netease_cookie").data
     qq_ck = music_config.get_config("qqmusic_cookie").data
     kugou_ck = music_config.get_config("kugou_cookie").data
+    custom_api = music_config.get_config("custom_api_url").data
+    custom_priority = music_config.get_config("custom_api_priority").data
+
+    qq_cred = load_qq_credential()
+    if qq_cred:
+        import time
+
+        left_days = max(
+            0.0,
+            (
+                qq_cred["musickey_create_time"]
+                + qq_cred["key_expires_in"]
+                - time.time()
+            )
+            / 86400,
+        )
+        qq_info = (
+            f"{_mask_cookie(qq_ck)}（移动协议已绑定: {qq_cred['nick'] or qq_cred['musicid']}，"
+            f"长效自动续期中，剩余约 {left_days:.1f} 天）"
+        )
+    else:
+        qq_info = f"{_mask_cookie(qq_ck)}（普通Cookie模式，推荐发送「QQ登录」升级长效续期）"
+
+    custom_info = (
+        f"{custom_api}（模式: {'优先自建' if custom_priority == 'custom_first' else '官方优先/自建兜底'}）"
+        if custom_api
+        else "未配置（使用「设置自建api <地址>」绑定）"
+    )
 
     status_text = (
-        "【MusicUID 音乐平台凭据状态】\n\n"
+        "【MusicUID 音乐平台凭据与音源状态】\n\n"
         f"• 🔴 网易云音乐: {_mask_cookie(netease_ck)}\n"
-        f"• 🟢 QQ 音乐: {_mask_cookie(qq_ck)}\n"
-        f"• 🔵 酷狗音乐: {_mask_cookie(kugou_ck)}\n\n"
+        f"• 🟢 QQ 音乐: {qq_info}\n"
+        f"• 🔵 酷狗音乐: {_mask_cookie(kugou_ck)}\n"
+        f"• 🌐 自建/第三方API: {custom_info}\n\n"
         "💡 登录与配置方式：\n"
-        "• 网易云/酷狗：发送「网易云登录」或「酷狗登录」直接扫码绑定；\n"
-        "• QQ音乐：发送「QQ音乐cookie <值>」或直接发送「QQ音乐cookie」查看教程。"
+        "• QQ/酷狗：发送「QQ登录」或「酷狗登录」直接扫码绑定；\n"
+        "• 网易云：发送「网易云cookie 你的值」完成绑定；\n"
+        "• 自建服务：发送「设置自建api http://...」或「测试自建api」。"
     )
     await bot.send(status_text)
+
+
+@sv_login.on_command(
+    ("设置自建api", "自建api", "配置自建api", "自建音源", "设置自建音源"),
+    block=True,
+    to_ai="配置自建或第三方音源解析微服务 API 地址",
+)
+async def handle_set_custom_api(bot: Bot, ev: Event) -> None:
+    """配置自建音源微服务地址。"""
+    if not is_login_authorized(ev):
+        await bot.send("❌ 权限不足：仅主人及登录白名单用户可配置音源 API。")
+        return
+
+    url = ev.text.strip()
+    if not url:
+        current_api = music_config.get_config("custom_api_url").data
+        await bot.send(
+            "【自建音源微服务 API 配置说明】\n\n"
+            f"• 当前配置地址：{current_api or '未配置'}\n"
+            "• 设置格式：\n"
+            "  👉 设置自建api http://127.0.0.1:3300\n"
+            "  👉 设置自建api https://api.example.com/url?id={song_id}&platform={platform}\n"
+            "• 测试连通性：发送「测试自建api」\n"
+            "• 清空配置：发送「设置自建api 清空」"
+        )
+        return
+
+    if url in ("清空", "clear", "none", "删除"):
+        music_config.set_config("custom_api_url", "")
+        await bot.send("✅ 已清空自建音源微服务配置，已恢复仅使用官方协议。")
+        return
+
+    music_config.set_config("custom_api_url", url)
+    logger.info(f"[MusicUID] 已配置自建音源 API: {url}")
+    await bot.send(
+        f"✅ 已成功配置自建音源服务地址！\n"
+        f"• 端点: {url}\n"
+        "💡 建议发送「测试自建api」验证服务连通性与可用性。"
+    )
+
+
+@sv_login.on_command(
+    ("自建api模式", "自建音源模式", "音源模式"),
+    block=True,
+    to_ai="设置自建音源服务的调用优先级（优先或兜底）",
+)
+async def handle_set_custom_api_mode(bot: Bot, ev: Event) -> None:
+    """设置自建音源与官方协议的调度优先级模式。"""
+    if not is_login_authorized(ev):
+        await bot.send("❌ 权限不足：仅主人及登录白名单用户可配置音源模式。")
+        return
+
+    text = ev.text.strip().lower()
+    if not text:
+        current_priority = music_config.get_config("custom_api_priority").data
+        mode_desc = (
+            "【优先自建API】（自建失败再回退官方协议）"
+            if current_priority == "custom_first"
+            else "【官方优先 / 自建兜底】（官方协议无VIP或未下发时自动切换自建API）"
+        )
+        await bot.send(
+            f"【自建音源调度模式设置】\n\n"
+            f"• 当前模式：{mode_desc}\n\n"
+            "💡 可选设置：\n"
+            "👉 自建api模式 fallback（推荐：官方优先，失败/无VIP时自动兜底）\n"
+            "👉 自建api模式 first（优先调用自建API解析，自建失败回退官方）"
+        )
+        return
+
+    if "first" in text or "优先" in text or "1" in text:
+        music_config.set_config("custom_api_priority", "custom_first")
+        await bot.send("✅ 音源调度模式已切换为：【优先调用自建 API】")
+    elif "fallback" in text or "兜底" in text or "2" in text or "default" in text:
+        music_config.set_config("custom_api_priority", "fallback_only")
+        await bot.send("✅ 音源调度模式已切换为：【官方优先，自建 API 兜底】")
+    else:
+        await bot.send("❌ 未知模式，请发送 fallback（官方优先/自建兜底）或 first（自建优先）。")
+
+
+@sv_login.on_fullmatch(
+    ("测试自建api", "测试自建音源", "测试自建"),
+    block=True,
+    to_ai="测试自建音源微服务连通性与健康状态",
+)
+async def handle_test_custom_api(bot: Bot, ev: Event) -> None:
+    """测试当前配置的自建音源 API 连通性。"""
+    if not is_login_authorized(ev):
+        await bot.send("❌ 权限不足：仅主人及登录白名单用户可测试接口。")
+        return
+
+    api_url = music_config.get_config("custom_api_url").data
+    token = music_config.get_config("custom_api_token").data
+    if not api_url:
+        await bot.send("❌ 尚未配置自建 API 地址，请先发送「设置自建api <URL>」！")
+        return
+
+    await bot.send(f"正在测试自建音源服务连通性...\n• 目标: {api_url}")
+    ok, msg = await test_custom_api_connection(api_url, token)
+    if ok:
+        await bot.send(f"🎉 自建音源服务连通测试成功！\n• 状态: {msg}")
+    else:
+        await bot.send(f"❌ 自建音源服务连接失败：{msg}\n请检查服务是否运行或网络是否畅通。")
+
+
+# ---------------------------------------------------------------- QQ 音乐手动刷新
+
+
+@sv_login.on_fullmatch(
+    ("qq音乐刷新", "qq刷新", "点歌刷新qq", "点歌刷新 qq", "刷新qq音乐"),
+    block=True,
+    to_ai="手动刷新 QQ 音乐移动端凭据与 Cookie",
+)
+async def handle_refresh_qq(bot: Bot, ev: Event) -> None:
+    """手动刷新 QQ 音乐长效凭据。"""
+    if not is_login_authorized(ev):
+        await bot.send("❌ 权限不足：仅主人及登录白名单用户可刷新凭证。")
+        return
+
+    cred = load_qq_credential()
+    if cred is None:
+        await bot.send(
+            "❌ 未检测到 QQ 音乐移动端协议凭据，请先发送「QQ登录」进行扫码绑定！"
+        )
+        return
+
+    await bot.send("正在请求 QQ 音乐官方服务器刷新凭据，请稍候...")
+    ok, msg = await refresh_qq_credential(cred)
+    if ok:
+        await bot.send(
+            f"🎉 QQ 音乐凭据刷新成功！\n"
+            f"• 账号: {cred['nick'] or cred['musicid']}\n"
+            f"• 状态: 凭据与 Cookie 已更新并自动延期，播放 VIP 歌曲畅通无阻！"
+        )
+    else:
+        await bot.send(f"❌ QQ 音乐凭据刷新失败：{msg}\n若已彻底失效请重新发送「QQ登录」扫码。")
 
 
 # ---------------------------------------------------------------- Cookie 快捷设置
@@ -382,11 +556,6 @@ async def handle_login(bot: Bot, ev: Event) -> None:
         await bot.send(LOGIN_MENU)
         return
 
-    # QQ 音乐由于协议风控与限制，发送详细教程与提示
-    if provider.platform_name == "qq":
-        await bot.send(QQ_COOKIE_GUIDE)
-        return
-
     # 网易云官方已对第三方 Web 扫码接口实施强风控拦截（状态码 882），引导直接使用 Cookie 绑定
     if provider.platform_name == "netease":
         await bot.send(
@@ -396,7 +565,7 @@ async def handle_login(bot: Bot, ev: Event) -> None:
         )
         return
 
-    # 3. 创建酷狗扫码会话
+    # 3. 创建扫码会话（QQ 音乐与酷狗均支持扫码）
     await bot.send(f"正在生成【{provider.display_name}】登录二维码，请稍候...")
     session = await provider.create_qr_session()
 

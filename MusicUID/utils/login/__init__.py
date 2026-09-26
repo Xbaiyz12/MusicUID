@@ -7,8 +7,11 @@ from .kugou import KugouLoginProvider
 from .netease import NeteaseLoginProvider
 from .qqmusic import (
     QQMusicLoginProvider,
-    parse_qq_cookie,
+    auto_refresh_qq_job,
     format_qq_cookie,
+    load_qq_credential,
+    parse_qq_cookie,
+    refresh_qq_credential,
 )
 
 LOGIN_PROVIDERS: dict[str, BaseLoginProvider] = {
@@ -41,8 +44,11 @@ __all__ = [
     "LoginStatus",
     "NeteaseLoginProvider",
     "QQMusicLoginProvider",
+    "auto_refresh_qq_job",
     "format_qq_cookie",
     "get_login_provider",
+    "load_qq_credential",
     "make_qr_image",
     "parse_qq_cookie",
+    "refresh_qq_credential",
 ]

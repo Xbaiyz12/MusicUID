@@ -6,6 +6,7 @@ from dataclasses import replace
 from gsuid_core.logger import logger
 
 from .base import SongInfo, SongCollection
+from .custom_api import resolve_custom_api
 from ..http import MusicRequestError, get_json, post_json, get_location
 from ..json_tools import get_id, to_obj, get_int, get_obj, get_str, to_list, get_list, join_names
 from ...musicuid_config import music_config
@@ -231,6 +232,12 @@ class NeteaseProvider:
         Raises:
             MusicRequestError: The fallback request failed.
         """
+        priority = music_config.get_config("custom_api_priority").data
+        if priority == "custom_first":
+            custom_res = await resolve_custom_api(song)
+            if custom_res:
+                return custom_res
+
         url = await self._weapi_play_url(song)
         if url:
             return url
@@ -238,9 +245,18 @@ class NeteaseProvider:
         location = await get_location(target)
         # 可播放响应有两种：302 跳到 CDN，或直接 200 返回音频流（此时没有 Location）。
         # 所以只有明确跳到 404 页才算不可播放，其余交给下载阶段判断。
-        if "404" in location:
-            return ""
-        return target
+        if "404" not in location:
+            return target
+
+        if priority != "custom_first":
+            custom_res = await resolve_custom_api(song)
+            if custom_res:
+                logger.info(
+                    f"[MusicUID] 网易云官方未下发《{song.name}》，触发自建 API 兜底取流"
+                )
+                return custom_res
+
+        return ""
 
     async def _weapi_play_url(self, song: SongInfo) -> str:
         """Ask the weapi player endpoint for an audio URL.
