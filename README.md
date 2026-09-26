@@ -1,167 +1,154 @@
 # MusicUID
 
-多平台点歌插件 for [GsCore](https://github.com/Genshin-bots/gsuid_core)，移植自
-[astrbot_plugin_neteasemusic](https://github.com/wbndmqaq/astrbot_plugin_neteasemusic)（MIT）。
+多平台点歌插件 for [GsCore](https://github.com/Genshin-bots/gsuid_core)。
 
-支持 **网易云音乐 / QQ音乐 / 酷狗音乐** 三平台搜索与音频下发，网易云另支持歌词与分享链接解析。
+支持 **网易云音乐 / QQ音乐 / 酷狗音乐** 三平台搜索与高品质音频下发，支持网易云歌词与多平台分享链接解析；集成 **手机扫码长效自动续期（方案一）** 与 **自建/第三方音源微服务平滑容灾（方案五）**。
 
-## 依赖与前提
+---
+
+## 核心特性
+
+- 🎵 **三平台并发聚合**：网易云音乐、QQ 音乐、酷狗音乐统一检索与连续编号点歌。
+- 📱 **手机扫码免密登录与长效保活（方案一）**：
+  - **QQ 音乐**：支持手机 QQ 扫码一键授权，获取长达数月的移动端专用凭据（`refresh_token` / `refresh_key`），后台定时（每 12 小时）自动静默向官方服务器续签顺延，告别网页 Cookie 72 小时频繁失效痛点。
+  - **酷狗音乐**：支持手机酷狗 App 扫码秒登。
+- 🌐 **自建 / 第三方音源微服务支持（方案五）**：
+  - 支持接入自建 `QQMusicApi`、`NeteaseCloudMusicApi`、`lx-music-api-server` 等微服务或自定义 URL 模板。
+  - **多级容灾调度**：支持「官方优先 / 自建兜底（`fallback_only`，默认）」与「自建优先（`custom_first`）」两种模式，遇到版权受限或未下发音频时自动无缝兜底。
+- 🎨 **开箱即用卡片渲染**：优先采用 GsCore 内置 **pytakumi** 本地渲染（速度极快、无内存负担、零浏览器依赖）；同时提供 Chromium 自动下载回退机制。
+- 🔗 **分享链接全自动解析**：自动识别群聊与私聊中的网易云、QQ 音乐、酷狗单曲/歌单/专辑链接或卡片并自动点播。
+- 🔊 **智能音频转码投递**：默认发送语音（支持超大体积 ffmpeg 自动降码率压缩防风控与丢包），完美适配 QQ 官方机器人及各类第三方适配器。
+
+---
+
+## 依赖与环境
 
 | 依赖 | 说明 |
 | --- | --- |
-| GsCore | 已包含 httpx / jinja2 / Pillow |
+| GsCore | 运行环境，包含 httpx / jinja2 / Pillow / APScheduler |
 | **pytakumi** | 图片卡片渲染，**GsCore 已内置**——纯本地、不需要浏览器，开箱即用 |
-| `playwright` + Chromium | 可选回退。仅当 core 没带 pytakumi 时才会用到，那时启动会自动下载 |
+| `playwright` + Chromium | 可选回退。仅当 core 没带 pytakumi 且开启自动安装时由插件后台下载 |
 | `pycryptodome` | 网易云 weapi 加密（可选）。缺失时自动回退公开外链 |
 | `ffmpeg` | 语音压缩（可选）。音频超过「语音体积上限」时才会调用 |
 
-卡片渲染优先走 GsCore 内置的 **pytakumi**（比浏览器方案快、内存占用低得多，且**完全不需要 Chromium**）。
-只有当 core 未提供 pytakumi 时，才会在启动时于后台准备浏览器回退（自动下载 Chromium，约 150MB，
-期间其他指令照常可用）。`auto_install_render` 控制是否自动下载，关掉后缺依赖只回退为纯文本。
+---
 
-**不依赖任何外部 API 服务**：三个平台都走各自的公开接口直连，装上即可用。
+## 指令一览
 
-卡片环境不可用时不会报错，所有指令以纯文本返回。
+所有指令无需特殊前缀，直接在群聊或私聊发送即可。
 
-## 指令
-
-所有指令无需前缀，直接发送即可。
+### 1. 点歌与播放
 
 | 指令 | 说明 | 示例 |
 | --- | --- | --- |
-| `点歌 关键词` | 三平台并发搜索并列出结果（编号全平台连续） | `点歌 晴天` |
+| `点歌 关键词` | 三平台并发搜索并列出卡片结果（编号全平台连续） | `点歌 晴天` |
 | `点歌 <平台> 关键词` | 临时指定平台（网易 / QQ / 酷狗） | `点歌 QQ 晴天` |
 | `播放 关键词` | 搜索并直接播放第一首 | `播放 晴天` |
-| `听N` | 播放当前列表第 N 首（列表 10 分钟内有效） | `听8` |
-| `歌词 关键词` | 查看歌词（当前仅网易云） | `歌词 晴天` |
-| `点歌登录 网易云` | 扫码登录网易云（免手动填 Cookie，支持 VIP 与无损） | `点歌登录 网易云` |
-| `点歌登录 酷狗` | 扫码登录酷狗音乐（免手动填 Cookie） | `点歌登录 酷狗` |
-| `点歌登录状态` | 查看各平台 Cookie 配置状态（需权限） | `点歌登录状态` |
-| `点歌导入cookie 平台 Cookie值` | 手动导入指定平台 Cookie（需权限） | `点歌导入cookie qq uin=...; qm_keyst=...` |
-| `点歌添加白名单 用户ID/@用户` | 添加登录权限白名单（主人专用） | `点歌添加白名单 12345678` |
-| `点歌删除白名单 用户ID/@用户` | 移除登录权限白名单（主人专用） | `点歌删除白名单 12345678` |
-| `点歌白名单` | 查看当前登录白名单列表 | `点歌白名单` |
-| `音乐帮助` | 帮助文本 | `音乐帮助` |
+| `听N` | 播放当前搜索列表第 N 首（列表 10 分钟内有效） | `听8` |
+| `歌词 关键词` | 查看歌词（当前支持网易云） | `歌词 晴天` |
+| `音乐帮助` | 查看插件完整帮助与使用说明 | `音乐帮助` |
 
-发送分享链接会自动解析：
+### 2. 账号登录、自建音源与凭证管理
 
-**网易云音乐**（`music.163.com` / `y.music.163.com` / `163cn.tv` 短链）：
-
-- **单曲** `song?id=...` → 拉详情并直接播放
-- **歌单 / 专辑** `playlist?id=...` / `album?id=...` → 列出歌曲并写入会话，可用「听N」选播
-
-**QQ音乐**（`y.qq.com` 各子域，含 `c6.y.qq.com` 短链）：
-
-- **单曲**三种形态都认：`playsong.html?songid=...`（数字 id）、App 分享卡片的
-  `playsong.html?...&songmid=...`、网页版 `songDetail/{songmid}` → 拉详情并直接播放
-- 歌单 / 专辑暂未接入
-
-**酷狗音乐**（`kugou.com` 各子域，含 `m.kugou.com`）：
-
-- **单曲**两种形态都认：卡片/长链直接带 `hash=`（它就是取流用的 song_id）；App 分享的
-  纯链接只带 `chain=`，需要抓一次移动版页面把内嵌 JSON 里的 hash 换出来
-- 歌单 / 专辑暂未接入
-
-**QQ 分享卡片**同样能解析：官机适配器会把卡片正文（含 `jump_url`）拼进消息文本，链接照常被
-抓取。注意第三方协议（OneBot / NoneBot2 系）**收不到**腾讯的富媒体卡片消息——这是平台限制，
-只能用官机渠道。
-
-## 配置
-
-在 GsCore 网页控制台 → 插件配置 → MusicUID 中修改：
-
-| 配置项 | 默认 | 说明 |
+| 指令 | 说明 | 示例 |
 | --- | --- | --- |
-| `default_platform` | `netease` | 未指定平台时使用 |
-| `netease_cookie` | 空 | 网易云 `MUSIC_U` 的值，填入后 VIP 歌曲与高音质才生效 |
-| `netease_level` | `exhigh` | 网易云取流优先档位，拿不到会自动降到标准档 |
-| `qqmusic_cookie` | 空 | QQ音乐 `y.qq.com` 的完整 Cookie。填入后会员曲目与 320kbps 档位可播放，且搜索更稳定；必须含 `uin` 与 `qm_keyst` |
-| `kugou_cookie` | 空 | 酷狗网页版完整 Cookie。填入后需单独购买专辑的曲目（周杰伦等原唱）可播 60 秒试听，完整版仍需在酷狗购买该专辑 |
-| `max_list` | `5` | 每平台条数（最大 10）。未指定平台时卡片总数 = 该值 × 3 |
-| `render_card` | `true` | 用图片卡片展示结果 |
-| `auto_install_render` | `true` | 启动时自动检测并安装卡片渲染依赖（playwright + Chromium 内核）|
-| `send_voice` | `true` | 以语音消息发送音频 |
-| `send_file` | `false` | 额外再发一份音频文件（语音能正常收听时无需开启） |
-| `local_file_ref` | `false` | 强制所有渠道用 `file://` 引用本地音频。默认按渠道自动选择 |
-| `enable_resolve` | `true` | 自动解析网易云分享链接 |
-| `download_timeout` | `60` | 音频下载超时（秒） |
-| `voice_max_mb` | `2` | 语音体积上限，超过则先用 ffmpeg 压缩再发 |
-| `voice_bitrate` | `64` | 语音压缩码率（kbps） |
-| `keep_temp_sec` | `60` | 临时文件保留秒数 |
+| `QQ登录` / `点歌登录 qq` | 弹出手机 QQ 授权二维码扫码绑定（长效自动续期） | `QQ登录` |
+| `酷狗登录` / `点歌登录 酷狗` | 弹出手机酷狗 App 授权二维码扫码绑定 | `酷狗登录` |
+| `QQ音乐刷新` | 手动向官方服务器请求刷新并顺延 QQ 音乐凭据有效期 | `QQ音乐刷新` |
+| `设置自建api <URL>` | 配置自建/第三方音源微服务地址（输入「清空」即可移除） | `设置自建api http://127.0.0.1:3300` |
+| `自建api模式 <模式>` | 切换调度优先级：`fallback`（官方优先/自建兜底）或 `first`（自建优先） | `自建api模式 fallback` |
+| `测试自建api` | 测试当前配置的自建音源微服务连通性与健康状态 | `测试自建api` |
+| `点歌状态` | 查看网易云、QQ 音乐、酷狗及自建音源服务的配置与剩余有效期 | `点歌状态` |
+| `网易云cookie <MUSIC_U>` | 导入网易云网页 Cookie（MUSIC_U 字段） | `网易云cookie 123456...` |
+| `点歌导入cookie <平台> <值>` | 手动导入指定平台 Cookie（需权限） | `点歌导入cookie qq uin=...; qm_keyst=...` |
+| `点歌加白 <用户ID/@用户>` | 添加登录与配置白名单（仅主人可用） | `点歌加白 12345678` |
+| `点歌删白 <用户ID/@用户>` | 移除白名单（仅主人可用） | `点歌删白 12345678` |
+| `点歌白名单` | 查看当前白名单用户列表 | `点歌白名单` |
 
-## 平台能力
+---
 
-| 平台 | 搜索 | 歌词 | 音频下发 | 分享链接解析 |
-| --- | --- | --- | --- | --- |
-| 网易云音乐 | ✅ | ✅ | ✅ 免费曲 + VIP（需 `netease_cookie`） | ✅ 单曲 / 歌单 / 专辑 |
-| QQ音乐 | ✅ | — | ✅ 免费曲 + VIP 320kbps（需 `qqmusic_cookie`） | ✅ 单曲 |
-| 酷狗音乐 | ✅ | — | ✅ 免费曲完整版；需单独购买专辑的曲目给 60 秒试听（需 `kugou_cookie`） | ✅ 单曲 |
+## 分享链接解析支持
 
-三个平台的取流链路都由插件自己实现，各有一条免登录捷径：
+在群内直接发送分享链接或音乐卡片即可触发自动解析并播放：
 
-- **网易云**：`weapi/song/enhance/player/url/v1`（AES-CBC + RSA 加密，带登录态）。
-  Cookie 里必须包含 `os=pc`，否则 VIP 歌曲只会返回 `br=0` 的空地址。拿不到时回退
-  `/song/media/outer/url` 公开外链（128kbps，仅免费曲）。
-- **QQ音乐**：`u.y.qq.com/cgi-bin/musicu.fcg` 的 `vkey.GetVkeyServer/CgiGetVkey`。
-  取流固定 `guid=10000`，`filename` 必须写成「前缀 + songmid + songmid + 后缀」（songmid
-  要拼两遍），前缀决定档位：`M800` = 320kbps mp3、`C400` = m4a。匿名时 `uin` 传 `0`，
-  只有 `pay_play=0` 的免费曲目能拿到地址，会员曲目一律返回 `104003`；填入
-  `qqmusic_cookie` 后改用 Cookie 里的真实 QQ 号（`uin`、`loginUin`、`comm.uin` 三处都要
-  跟着改）并带上 Cookie，会员曲目与 320kbps 档位才会下发。⚠️ **搜索也必须带 Cookie**：
-  搜索走 `musicu.fcg` 的 `DoSearchForQQMusicDesktop`（旧的 `client_search_cp` 已被腾讯关闭，
-  任何请求都返回 HTTP 500），而该接口不带 Cookie 时会返回 200 但列表为空。
-- **酷狗**：两条链路。免登录走旧版 CDN `trackercdn.kugou.com/i/v2/`，只校验
-  `md5(hash + kgcloudv2)` 签名，不需要登录态也不需要设备指纹。填入 `kugou_cookie` 后先走
-  网关 `gateway.kugou.com/v5/url`，它要两个签名：`key` = md5(hash + 盐 + appid + mid +
-  userid)，以及 `signature` = md5(盐 + 按参数名排序的 k=v 拼接 + 盐)；`free_part` 固定为 0，
-  让服务端自行决定下发完整版还是试听片段（传 1 会把免费曲目也截断成试听）。⚠️ 上游
-  KuGouMusicApi 的 `song_url.js` 写的是 `notSign`，而它的 `request.js` 判断的是
-  `notSignature`，这个拼写不一致意味着签名**其实仍会生成**——照字面省掉签名会被服务端以
-  `err signature` 拒绝。设备指纹则相反：`mid` 用固定派生值、`dfid` 每次随机，直接沿用
-  Cookie 里的 mid / dfid 反而会被判 `20018`。
+- **网易云音乐**（`music.163.com` / `y.music.163.com` / `163cn.tv` 短链）：
+  - **单曲** `song?id=...` → 自动获取详情并播放；
+  - **歌单 / 专辑** `playlist?id=...` / `album?id=...` → 提取歌曲列表并写入会话，支持「听N」点播。
+- **QQ音乐**（`y.qq.com` 各子域，含 `c6.y.qq.com` 短链）：
+  - 支持 `playsong.html?songid=...`、App 分享卡片 `playsong.html?...&songmid=...`、网页版 `songDetail/{songmid}`。
+- **酷狗音乐**（`kugou.com` 各子域，含 `m.kugou.com`）：
+  - 支持带 `hash=` 的直链以及带 `chain=` 的 App 移动分享短链。
 
-因为走的是各平台的公开接口，**版权受限的曲目**（例如周杰伦在酷狗/QQ音乐的部分作品）
-即使标记为免费也可能取不到地址，插件会明确提示无法播放。
+---
 
-## 音频投递
+## 配置项说明
 
-- 默认只发**语音**，不发文件（`send_file` 默认关闭）。语音时长与体积都符合平台要求。
-- 音频超过 `voice_max_mb` 时，先用 ffmpeg 压成单声道 `voice_bitrate` 再发。320kbps
-  整首歌（10MB+）直接当语音发会被 QQ 静默丢弃，压缩后约 1.7MB。
-- 媒体引用形式按渠道自动选择：**QQ 官方机器人发 `file://` 本机路径**，其余渠道发
-  `base64://`。原因是 QQ 官方适配器在缺少格式信息时会把无后缀的 base64 音频当作
-  WAV 解析，报 `file does not start with RIFF id` 后整条语音被丢弃。
+所有配置均已注册在 GsCore 统一配置系统中，可在 **GsCore 网页控制台（WebConsole）→ 插件配置 → MusicUID** 中可视化修改并实时热重载生效：
+
+| 配置项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `default_platform` | `netease` | 未指定平台时的默认搜索平台（`netease` / `qq` / `kugou`） |
+| `custom_api_url` | 空 | 自建/第三方音源微服务地址（填入地址即开启，留空关闭） |
+| `custom_api_priority` | `fallback_only` | 调度优先级：`fallback_only`（官方优先/自建兜底）或 `custom_first`（优先自建） |
+| `custom_api_token` | 空 | 自建音源服务的认证 Token / 密钥（若无鉴权留空） |
+| `netease_cookie` | 空 | 网易云 `MUSIC_U`，配置后 VIP 歌曲与高音质生效 |
+| `netease_level` | `exhigh` | 网易云音质偏好：`standard` / `exhigh` / `lossless` |
+| `qqmusic_cookie` | 空 | QQ 音乐 Cookie（推荐直接发送「QQ登录」扫码生成长效凭据） |
+| `kugou_cookie` | 空 | 酷狗音乐 Cookie（推荐直接发送「酷狗登录」扫码绑定） |
+| `max_list` | `5` | 每个平台最多搜索条数（1-10），未指定平台时卡片总数 = 条数 × 平台数 |
+| `render_card` | `true` | 是否使用图片卡片展示搜索结果（关闭后回退纯文本） |
+| `auto_install_render` | `true` | 缺失 pytakumi 时是否自动下载 Chromium 作为渲染回退 |
+| `send_voice` | `true` | 是否以语音消息发送音频 |
+| `send_file` | `false` | 是否额外再发一份音频文件（默认关闭） |
+| `local_file_ref` | `false` | 是否强制使用 `file://` 本机路径引用（默认自动识别适配器渠道） |
+| `enable_resolve` | `true` | 是否开启音乐分享链接与卡片自动解析 |
+| `download_timeout` | `60` | 音频下载超时时间（秒） |
+| `voice_max_mb` | `2` | 语音体积上限（MB），超出自动由 ffmpeg 进行智能压缩 |
+| `voice_bitrate` | `64` | 压缩时使用的 mp3 码率（kbps） |
+| `keep_temp_sec` | `60` | 临时音频与卡片文件的保留秒数 |
+
+---
 
 ## 目录结构
 
 ```
 MusicUID/
-├── __init__.py / __nest__.py        # 嵌套加载入口
+├── __init__.py / __nest__.py        # 插件入口
 ├── pyproject.toml / ruff.toml
+├── README.md
 └── MusicUID/
-    ├── __init__.py                  # Plugins(...) 声明
-    ├── musicuid_card/                # 卡片数据 + HTML 模板
-    ├── musicuid_config/              # 配置项
-    ├── musicuid_help/                # 帮助
-    ├── musicuid_play/                # 点歌 / 播放 / 选歌 / 歌词
-    ├── musicuid_lifecycle/           # 关闭 / 重载时释放 Chromium 与连接池
-    ├── musicuid_resolve/             # 分享链接解析
-    ├── tests/                        # 离线单测（pytest，不需要网络）
-    └── utils/                        # provider / 渲染 / 投递 / HTTP
+    ├── __init__.py                  # 插件元信息与 SV 注册
+    ├── musicuid_card/                # 卡片数据封装与 pytakumi/HTML 模板
+    ├── musicuid_config/              # 插件配置项模型定义
+    ├── musicuid_help/                # 帮助菜单与指令指引
+    ├── musicuid_lifecycle/           # 定时任务（凭据自动续期）与资源释放
+    ├── musicuid_login/               # 扫码登录、凭据管理与自建 API 指令
+    ├── musicuid_play/                # 点歌、播放、选歌与会话状态控制
+    ├── musicuid_resolve/             # 音乐分享链接与卡片自动解析
+    ├── tests/                        # 离线单元测试
+    └── utils/
+        ├── login/                    # QQ 移动端协议、酷狗、网易云扫码实现
+        ├── provider/                 # 各平台官方取流与 custom_api 自建微服务解析
+        ├── delivery.py               # 语音/文件转码与平台投递适配
+        ├── http.py                   # 统一 HTTP 请求封装
+        └── render.py                 # 双模卡片渲染引擎
 ```
+
+---
 
 ## 开发与测试
 
-单测全部离线（不发网络请求、不需要 Core 进程），必须在插件被放在
-`<core>/gsuid_core/plugins/MusicUID/` 时运行——`SV()` 依赖路径中的 `plugins` 段推断归属：
-
 ```bash
-pytest gsuid_core/plugins/MusicUID/MusicUID/tests        # 61 项
+# 运行离线单元测试
+pytest gsuid_core/plugins/MusicUID/MusicUID/tests
+
+# 代码风格与语法检查
 ruff check gsuid_core/plugins/MusicUID
 ruff format --check gsuid_core/plugins/MusicUID
-basedpyright                                             # 在插件目录内运行
 ```
 
-## 许可
+---
 
-MIT。音乐版权归各平台与权利人所有，本插件仅供学习交流使用。
+## 许可协议
+
+MIT License。音频与元数据版权归各音乐平台与原创权利人所有，本项目仅供技术研究与学习交流。
