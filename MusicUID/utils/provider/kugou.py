@@ -10,6 +10,7 @@ from gsuid_core.logger import logger
 
 from .base import SongInfo, SongCollection
 from ..http import get_json
+from .custom_api import resolve_custom_api
 from ..json_tools import to_obj, get_int, get_obj, get_str, get_list
 from ...musicuid_config import music_config
 
@@ -154,13 +155,13 @@ class KugouProvider:
 
         填入 ``kugou_cookie`` 后先走网关 ``v5/url``：免费曲目返回完整版，需要单独购买
         专辑的曲目（周杰伦等原唱）返回 60 秒试听片段。没有 Cookie、Cookie 不完整或
-        网关拒绝时回退旧版 CDN，只对免费曲目有效。
+        网关拒绝时回退旧版 CDN，只对免费曲目有效；两条链路都没结果时再交给自建音源兜底。
 
         Args:
             song: A song returned by :meth:`search`.
 
         Returns:
-            A downloadable URL, or an empty string when both paths refuse.
+            A downloadable URL, or an empty string when every path refuses.
 
         Raises:
             MusicRequestError: The platform request failed.
@@ -170,7 +171,11 @@ class KugouProvider:
             url = await self._logged_play_url(song, cookie)
             if url:
                 return url
-        return await self._anonymous_play_url(song)
+        url = await self._anonymous_play_url(song)
+        if url:
+            return url
+        # 与网易云 / QQ 保持一致：官方链路都没下发时交给自建音源兜底
+        return await resolve_custom_api(song)
 
     async def _logged_play_url(self, song: SongInfo, cookie: str) -> str:
         """Ask the gateway for a url with the account login state attached.

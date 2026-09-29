@@ -4,6 +4,8 @@ Platform payloads are untrusted input: every field is narrowed with
 ``isinstance`` instead of being trusted, so no ``Any`` leaks downstream.
 """
 
+import math
+
 
 def to_obj(value: object) -> dict[str, object]:
     """Narrow a decoded JSON value to an object with string keys.
@@ -76,25 +78,6 @@ def get_str(obj: dict[str, object], key: str, default: str = "") -> str:
     return value if isinstance(value, str) else default
 
 
-def get_bool(obj: dict[str, object], key: str, default: bool = False) -> bool:
-    """Read a boolean field, accepting the 0/1 integers some APIs return.
-
-    Args:
-        obj: Parent object.
-        key: Field name.
-        default: Value returned when the field is absent or mistyped.
-
-    Returns:
-        The field value or ``default``.
-    """
-    value = obj.get(key)
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int):
-        return value != 0
-    return default
-
-
 def get_int(obj: dict[str, object], key: str, default: int = 0) -> int:
     """Read an integer field, accepting numeric strings and floats.
 
@@ -112,9 +95,10 @@ def get_int(obj: dict[str, object], key: str, default: int = 0) -> int:
     if isinstance(value, int):
         return value
     if isinstance(value, float):
-        return int(value)
-    if isinstance(value, str) and value.lstrip("-").isdigit():
-        return int(value)
+        # 平台偶尔会回 NaN / Infinity，int() 对它们会抛 ValueError / OverflowError
+        return int(value) if math.isfinite(value) else default
+    if isinstance(value, str) and value.strip().lstrip("-").isdecimal():
+        return int(value.strip())
     return default
 
 

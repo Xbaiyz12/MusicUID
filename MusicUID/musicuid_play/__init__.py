@@ -60,6 +60,27 @@ def parse_platform(text: str, fallback: str) -> tuple[str, str]:
     return key, parts[1].strip() if len(parts) > 1 else ""
 
 
+def strip_words(raw: str, words: tuple[str, ...]) -> str:
+    """按关键字剥离命令词，保留其余部分的原始大小写。
+
+    Cookie 值（MUSIC_U / qm_keyst）与部分平台的用户 ID 都大小写敏感，
+    所以这里只能大小写不敏感地定位、按原样切除。
+
+    Args:
+        raw: 用户输入的原文。
+        words: 依次剥离的命令词。
+
+    Returns:
+        剥离后的参数文本。
+    """
+    result = raw
+    for word in words:
+        index = result.lower().find(word)
+        if index >= 0:
+            result = result[:index] + result[index + len(word) :]
+    return result.strip()
+
+
 async def search_songs(platform: str, keyword: str) -> list[SongInfo]:
     """Search a platform with the configured list size.
 
@@ -111,6 +132,10 @@ async def play_song(bot: Bot, song: SongInfo) -> None:
     except MusicRequestError as e:
         await bot.send(f"获取播放地址失败：{e}")
         return
+    except Exception as e:  # noqa: BLE001 - 未预期异常也不该让点歌静默失败
+        logger.warning(f"[MusicUID] 取流异常（{song.platform}）：{e}")
+        await bot.send("获取播放地址失败，请稍后重试或换一首")
+        return
     if not audio_url:
         if song.payplay:
             await bot.send(f"《{song.name}》需要 {provider.display_name} 会员或购买该专辑才能播放")
@@ -156,6 +181,7 @@ async def song_request(bot: Bot, ev: Event) -> None:
     # 1. 帮助指令拦截路由
     if clean_kw in ("帮助", "help", "菜单", "menu"):
         from ..musicuid_help import send_help
+
         await send_help(bot, ev)
         return
 
@@ -173,12 +199,7 @@ async def song_request(bot: Bot, ev: Event) -> None:
         "导入cookie",
         "绑定",
     )
-    if (
-        clean_kw.startswith(control_prefixes)
-        or "登录" in clean_kw
-        or "cookie" in clean_kw
-        or "白名单" in clean_kw
-    ):
+    if clean_kw.startswith(control_prefixes) or "登录" in clean_kw or "cookie" in clean_kw or "白名单" in clean_kw:
         from ..musicuid_login import (
             handle_login,
             add_whitelist,
@@ -188,6 +209,8 @@ async def song_request(bot: Bot, ev: Event) -> None:
             check_login_status,
         )
 
+        # 判断用 lower 副本，下发的参数必须是原文，否则凭据会被改写成小写
+        raw_kw = keyword.strip()
         if clean_kw.startswith(("状态", "status")) or clean_kw == "登录状态":
             await check_login_status(bot, ev)
             return
@@ -195,28 +218,22 @@ async def song_request(bot: Bot, ev: Event) -> None:
             await list_whitelist(bot, ev)
             return
         if clean_kw.startswith(("加白", "添加白名单")):
-            ev.text = clean_kw.replace("添加白名单", "", 1).replace("加白", "", 1).strip()
+            ev.text = strip_words(raw_kw, ("添加白名单", "加白"))
             await add_whitelist(bot, ev)
             return
         if clean_kw.startswith(("删白", "删除白名单")):
-            ev.text = clean_kw.replace("删除白名单", "", 1).replace("删白", "", 1).strip()
+            ev.text = strip_words(raw_kw, ("删除白名单", "删白"))
             await remove_whitelist(bot, ev)
             return
         if "cookie" in clean_kw or clean_kw.startswith("绑定"):
             ev.command = "设置cookie"
-            ev.text = (
-                clean_kw.replace("设置cookie", "", 1)
-                .replace("导入cookie", "", 1)
-                .replace("cookie", "", 1)
-                .replace("绑定", "", 1)
-                .strip()
-            )
+            ev.text = strip_words(raw_kw, ("设置cookie", "导入cookie", "cookie", "绑定"))
             await handle_set_cookie(bot, ev)
             return
 
         # 登录处理（如 网易云登录、酷狗登录、登录 网易云 等）
         ev.command = "点歌登录"
-        ev.text = clean_kw.replace("登录", "", 1).replace("login", "", 1).strip()
+        ev.text = strip_words(raw_kw, ("登录", "login"))
         await handle_login(bot, ev)
         return
 

@@ -1,6 +1,7 @@
 """Shared async HTTP client for the music platforms."""
 
 from typing import Final
+from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
 from collections.abc import Mapping
 
 import httpx
@@ -10,6 +11,19 @@ USER_AGENT: Final[str] = (
 )
 
 DEFAULT_TIMEOUT: Final[float] = 20.0
+
+# 查询参数名里出现这些片段就按敏感参数处理（access_token / api_key / sign 等都要盖住）
+_SENSITIVE_PARTS: Final[tuple[str, ...]] = (
+    "token",
+    "cookie",
+    "password",
+    "secret",
+    "sign",
+    "auth",
+    "key",
+    "userid",
+    "session",
+)
 
 _client: httpx.AsyncClient | None = None
 
@@ -45,18 +59,17 @@ async def close_client() -> None:
 def _clean_url_for_log(url: str) -> str:
     """Strip sensitive query params from URL for safe logging/error messages."""
     try:
-        from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
         parsed = urlparse(url)
         if not parsed.query:
             return url
-        params = []
-        for k, v in parse_qsl(parsed.query, keep_blank_values=True):
-            if k.lower() in {"token", "userid", "cookie", "key", "password", "signature", "auth"}:
-                params.append((k, "***"))
+        params: list[tuple[str, str]] = []
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+            if any(part in key.lower() for part in _SENSITIVE_PARTS):
+                params.append((key, "***"))
             else:
-                params.append((k, v))
+                params.append((key, value))
         return urlunparse(parsed._replace(query=urlencode(params)))
-    except Exception:
+    except ValueError:
         return url.split("?")[0]
 
 
@@ -149,18 +162,21 @@ async def get_text(
         res = await get_client().get(url, params=params, headers=headers)
         res.raise_for_status()
     except httpx.HTTPError as e:
-        raise MusicRequestError(f"请求失败（{url}）：{e}") from e
+        raise MusicRequestError(f"请求失败（{_clean_url_for_log(url)}）：{e}") from e
     return res.text
 
 
-async def get_location(url: str) -> str:
-    """Follow no redirects and return the ``Location`` header of a 302.
+async def get_location(url: str) -> tuple[int, str]:
+    """Follow no redirects and report the status code plus the ``Location`` header.
+
+    调用方必须同时看状态码：只看 Location 会把 403/429 之类的前置拒绝
+    误判成「拿到了可播放地址」。
 
     Args:
         url: Absolute endpoint URL that is expected to redirect.
 
     Returns:
-        The redirect target, or an empty string when there is none.
+        ``(status_code, location)``; ``location`` is empty when there is none.
 
     Raises:
         MusicRequestError: The transport failed.
@@ -168,8 +184,8 @@ async def get_location(url: str) -> str:
     try:
         res = await get_client().get(url, follow_redirects=False)
     except httpx.HTTPError as e:
-        raise MusicRequestError(f"请求失败（{url}）：{e}") from e
-    return res.headers.get("location", "")
+        raise MusicRequestError(f"请求失败（{_clean_url_for_log(url)}）：{e}") from e
+    return res.status_code, res.headers.get("location", "")
 
 
 async def download(url: str, timeout: float) -> bytes:
@@ -189,7 +205,7 @@ async def download(url: str, timeout: float) -> bytes:
         res = await get_client().get(url, timeout=httpx.Timeout(timeout))
         res.raise_for_status()
     except httpx.HTTPError as e:
-        raise MusicRequestError(f"音频下载失败：{e}") from e
+        raise MusicRequestError(f"音频下载失败（{_clean_url_for_log(url)}）：{e}") from e
     if not res.content:
         raise MusicRequestError("音频下载失败：返回内容为空")
     return res.content

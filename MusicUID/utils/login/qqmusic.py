@@ -2,19 +2,38 @@
 
 from __future__ import annotations
 
+import os
 import re
 import json
 import time
 import uuid
+import asyncio
 import urllib.parse
 from typing import TypedDict
 
 import httpx
+
 from gsuid_core.logger import logger
 
 from .base import LoginStatus, LoginSession, BaseLoginProvider
 from ...musicuid_config import music_config
 from ..resource.RESOURCE_PATH import QQ_CREDENTIAL_PATH
+
+# 刷新是「读文件 → 请求 → 写文件 + 写配置」的临界区，必须串行：
+# 并发刷新会用同一个 refresh_token，后写者把已轮换的凭据覆盖回旧值
+_refresh_lock = asyncio.Lock()
+
+
+def _parse_int(value: object, fallback: int) -> int:
+    """把接口返回的数值字段安全转成 int，畸形值回退到 fallback。"""
+    if isinstance(value, bool):
+        return fallback
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+        return int(value.strip())
+    return fallback
+
 
 _HEADERS = {
     "User-Agent": (
@@ -84,32 +103,51 @@ def load_qq_credential() -> QQMobileCredential | None:
 
 
 def save_qq_credential(cred: QQMobileCredential) -> None:
-    """保存 QQ 音乐移动端凭据至本地文件。"""
+    """保存 QQ 音乐移动端凭据至本地文件。
+
+    写临时文件再原子替换：直接覆写时中途崩溃会留下半截 JSON，
+    下次读取解析失败就会被当成「未绑定」，用户只能重新扫码。
+    """
+    tmp_path = QQ_CREDENTIAL_PATH.with_suffix(".json.tmp")
     try:
-        QQ_CREDENTIAL_PATH.write_text(
-            json.dumps(cred, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        tmp_path.write_text(json.dumps(cred, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp_path, QQ_CREDENTIAL_PATH)
     except OSError as e:
         logger.error(f"[MusicUID] 保存 QQ 音乐凭据失败: {e}")
+        tmp_path.unlink(missing_ok=True)
 
 
-def is_credential_expiring(
-    cred: QQMobileCredential, buffer_sec: int = 86400 * 7
-) -> bool:
-    """判断凭据是否已进入需刷新的临界期（默认剩余小于 7 天）。"""
+def is_credential_expiring(cred: QQMobileCredential, buffer_sec: int = 0) -> bool:
+    """判断凭据是否已进入需刷新的临界期。
+
+    缓冲期按有效期推导（五分之一，最长 7 天），不能写死 7 天——移动端 musickey
+    的有效期本身只有 3 天左右，固定 7 天会让判定恒为真，每次点歌都触发一次刷新。
+
+    Args:
+        cred: 待检查的凭据。
+        buffer_sec: 自定义缓冲期；传 0 表示按有效期自动推导。
+
+    Returns:
+        ``True`` 表示应立即尝试续期。
+    """
     create_time = cred["musickey_create_time"]
     expires_in = cred["key_expires_in"]
     if create_time <= 0 or expires_in <= 0:
-        return False
-    expire_deadline = create_time + expires_in
-    return time.time() >= (expire_deadline - buffer_sec)
+        # 有效期未知时按「需要刷新」处理，否则自动续期会永久静默失效
+        return True
+    if buffer_sec <= 0:
+        buffer_sec = min(max(expires_in // 5, 3600), 86400 * 7)
+    return time.time() >= (create_time + expires_in - buffer_sec)
 
 
-async def refresh_qq_credential(
-    cred: QQMobileCredential | None = None,
-) -> tuple[bool, str]:
-    """通过移动端协议与 refresh_token/key 刷新 QQ 音乐凭证。"""
+async def refresh_qq_credential(cred: QQMobileCredential | None = None) -> tuple[bool, str]:
+    """通过移动端协议与 refresh_token/key 刷新 QQ 音乐凭证（串行执行）。"""
+    async with _refresh_lock:
+        return await _refresh_qq_credential_locked(cred)
+
+
+async def _refresh_qq_credential_locked(cred: QQMobileCredential | None = None) -> tuple[bool, str]:
+    """刷新凭据的实际实现，调用方必须已持有 :data:`_refresh_lock`。"""
     target = cred or load_qq_credential()
     if target is None:
         return False, "未找到已保存的 QQ 音乐移动端凭证"
@@ -144,6 +182,9 @@ async def refresh_qq_credential(
         logger.warning(f"[MusicUID] 请求 QQ 音乐刷新接口失败: {e}")
         return False, f"网络请求异常: {e}"
 
+    if not isinstance(res_json, dict):
+        return False, "返回数据格式不符合预期"
+
     req_block = res_json.get("req")
     if not isinstance(req_block, dict):
         return False, "返回数据格式不符合预期"
@@ -158,18 +199,22 @@ async def refresh_qq_credential(
     if not isinstance(data, dict):
         return False, "返回核心凭据为空"
 
-    new_musickey = str(data.get("musickey") or target["musickey"])
+    # 必须真的带回新 musickey，否则只是把旧值原样写回、还谎报刷新成功
+    new_musickey = str(data.get("musickey") or "")
+    if not new_musickey:
+        logger.warning("[MusicUID] QQ 音乐刷新响应未带回新的 musickey，按失败处理")
+        return False, "服务端未返回新凭据"
     new_refresh_token = str(data.get("refresh_token") or target["refresh_token"])
     new_refresh_key = str(data.get("refresh_key") or target["refresh_key"])
-    new_create_time = int(str(data.get("musickeyCreateTime") or int(time.time())))
-    new_expires_in = int(str(data.get("keyExpiresIn") or target["key_expires_in"]))
+    new_create_time = _parse_int(data.get("musickeyCreateTime"), target["musickey_create_time"])
+    new_expires_in = _parse_int(data.get("keyExpiresIn"), target["key_expires_in"])
     new_nick = str(data.get("nick") or target["nick"])
 
     updated_cred = QQMobileCredential(
         openid=str(data.get("openid") or target["openid"]),
         refresh_token=new_refresh_token,
         access_token=str(data.get("access_token") or target["access_token"]),
-        expired_at=int(str(data.get("expired_at") or target["expired_at"])),
+        expired_at=_parse_int(data.get("expired_at"), target["expired_at"]),
         musicid=target["musicid"],
         musickey=new_musickey,
         unionid=str(data.get("unionid") or target["unionid"]),
@@ -182,10 +227,7 @@ async def refresh_qq_credential(
     )
     save_qq_credential(updated_cred)
 
-    formatted_cookie = (
-        f"uin={target['musicid']}; qm_keyst={new_musickey}; "
-        f"qqmusic_key={new_musickey}"
-    )
+    formatted_cookie = f"uin={target['musicid']}; qm_keyst={new_musickey}; qqmusic_key={new_musickey}"
     music_config.set_config("qqmusic_cookie", formatted_cookie)
     logger.info(
         f"[MusicUID] QQ 音乐移动凭据自动刷新成功（用户: {new_nick or target['musicid']}，"
@@ -224,9 +266,7 @@ def format_qq_cookie(cookie_str: str) -> str:
     return "; ".join(extracted) if extracted else cookie_str.strip()
 
 
-async def _exchange_mobile_credential(
-    sig_url: str, nick: str
-) -> tuple[QQMobileCredential | None, str]:
+async def _exchange_mobile_credential(sig_url: str, nick: str) -> tuple[QQMobileCredential | None, str]:
     """通过 ptlogin 鉴权结果换取移动端完整长效凭据。"""
     parsed = urllib.parse.urlparse(sig_url)
     qs = urllib.parse.parse_qs(parsed.query)
@@ -258,9 +298,7 @@ async def _exchange_mobile_credential(
     check_headers = {**_HEADERS, "Referer": "https://xui.ptlogin2.qq.com/"}
 
     try:
-        async with httpx.AsyncClient(
-            headers=check_headers, timeout=10.0, follow_redirects=False
-        ) as client:
+        async with httpx.AsyncClient(headers=check_headers, timeout=10.0, follow_redirects=False) as client:
             sig_resp = await client.get(
                 "https://ssl.ptlogin2.graph.qq.com/check_sig",
                 params=check_sig_params,
@@ -272,10 +310,7 @@ async def _exchange_mobile_credential(
             auth_data = {
                 "response_type": "code",
                 "client_id": "100497308",
-                "redirect_uri": (
-                    "https://y.qq.com/portal/wx_redirect.html?login_type=1&"
-                    "surl=https://y.qq.com/"
-                ),
+                "redirect_uri": ("https://y.qq.com/portal/wx_redirect.html?login_type=1&surl=https://y.qq.com/"),
                 "scope": "get_user_info,get_app_friends",
                 "state": "state",
                 "switch": "",
@@ -419,12 +454,8 @@ class QQMusicLoginProvider(BaseLoginProvider):
         cookies = {"qrsig": session.key}
 
         try:
-            async with httpx.AsyncClient(
-                headers=headers, cookies=cookies, timeout=10.0
-            ) as client:
-                resp = await client.get(
-                    "https://ssl.ptlogin2.qq.com/ptqrlogin", params=params
-                )
+            async with httpx.AsyncClient(headers=headers, cookies=cookies, timeout=10.0) as client:
+                resp = await client.get("https://ssl.ptlogin2.qq.com/ptqrlogin", params=params)
         except httpx.HTTPError as e:
             session.status = LoginStatus.WAITING
             session.message = f"网络波动: {e}"
@@ -460,10 +491,7 @@ class QQMusicLoginProvider(BaseLoginProvider):
                 return session
 
             save_qq_credential(cred)
-            formatted = (
-                f"uin={cred['musicid']}; qm_keyst={cred['musickey']}; "
-                f"qqmusic_key={cred['musickey']}"
-            )
+            formatted = f"uin={cred['musicid']}; qm_keyst={cred['musickey']}; qqmusic_key={cred['musickey']}"
             music_config.set_config("qqmusic_cookie", formatted)
             session.status = LoginStatus.SUCCESS
             session.cookie = formatted
@@ -475,26 +503,3 @@ class QQMusicLoginProvider(BaseLoginProvider):
             session.message = msg
 
         return session
-
-    @staticmethod
-    async def verify_cookie(cookie_str: str) -> tuple[bool, str]:
-        """验证 QQ 音乐 Cookie 是否有效。"""
-        formatted = format_qq_cookie(cookie_str)
-        if not formatted:
-            return False, "Cookie 不能为空"
-
-        url = "https://c.y.qq.com/rsc/fcgi-bin/fcg_get_profile_homepage.fcg"
-        headers = {**_HEADERS, "Cookie": formatted}
-        try:
-            async with httpx.AsyncClient(headers=headers, timeout=8.0) as client:
-                resp = await client.get(url)
-                data = resp.json()
-                if data.get("code") == 0:
-                    creator = data.get("data", {}).get("creator", {})
-                    nick = creator.get("nick") or creator.get("name") or "QQ音乐用户"
-                    return True, nick
-                return False, data.get("msg") or "Cookie 无效或已过期"
-        except (httpx.HTTPError, json.JSONDecodeError) as e:
-            if "uin=" in formatted:
-                return True, "已导入（无法联网验证）"
-            return False, f"请求失败: {e}"

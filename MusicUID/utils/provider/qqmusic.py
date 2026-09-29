@@ -1,16 +1,17 @@
 """QQ Music provider: public search, share-link detail and url resolution."""
 
 import re
+import time
 from typing import Final
 
 from gsuid_core.logger import logger
 
 from .base import SongInfo, SongCollection
-from .custom_api import resolve_custom_api
 from ..http import get_json, post_json
+from .custom_api import resolve_custom_api
 from ..json_tools import to_obj, get_int, get_obj, get_str, get_list, join_names
+from ..login.qqmusic import load_qq_credential, refresh_qq_credential, is_credential_expiring
 from ...musicuid_config import music_config
-from ..login.qqmusic import load_qq_credential, is_credential_expiring, refresh_qq_credential
 
 # musicu.fcg 同时承担搜索与取流；旧的 client_search_cp 已被腾讯关闭（一律返回 HTTP 500）
 MUSICU_URL: Final[str] = "https://u.y.qq.com/cgi-bin/musicu.fcg"
@@ -27,13 +28,27 @@ QUALITY_TIERS: Final[tuple[tuple[str, str], ...]] = (("M800", "mp3"), ("C400", "
 # 取流固定使用 guid=10000；登录态缺失或曲目权限不足时返回该 code
 LOGIN_REQUIRED: Final[int] = 104003
 
+# 静默续签的冷却窗口：避免同一窗口内每次搜索/取流都插一次刷新请求
+REFRESH_COOLDOWN_SEC: Final[float] = 300.0
+_last_refresh_at: float = 0.0
+
 
 async def _ensure_active_cookie() -> str:
-    """确保 QQ 音乐凭据处于有效状态（若临近过期则自动触发静默续期）。"""
+    """确保 QQ 音乐凭据处于有效状态（若临近过期则自动触发静默续期）。
+
+    续期本身要发一次网络请求，所以这里带冷却窗口：命中 104003 之前不会
+    在同一次点歌的多次调用里反复刷新。
+    """
+    global _last_refresh_at
     cred = load_qq_credential()
     if cred is not None and is_credential_expiring(cred):
-        logger.info("[MusicUID] QQ 音乐移动凭据临近过期，点歌调用前自动触发静默续签...")
-        await refresh_qq_credential(cred)
+        now = time.time()
+        if now - _last_refresh_at >= REFRESH_COOLDOWN_SEC:
+            _last_refresh_at = now
+            logger.info("[MusicUID] QQ 音乐移动凭据临近过期，点歌调用前自动触发静默续签...")
+            ok, msg = await refresh_qq_credential(cred)
+            if not ok:
+                logger.warning(f"[MusicUID] QQ 音乐凭据静默续签失败：{msg}，本次仍按现有 Cookie 取流")
     return music_config.get_config("qqmusic_cookie").data
 
 

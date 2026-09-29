@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from urllib.parse import urlparse
 
 from gsuid_core.sv import SV
 from gsuid_core.bot import Bot
@@ -52,10 +53,13 @@ async def expand_short_link(url: str) -> str:
     Raises:
         MusicRequestError: The redirect request failed.
     """
-    if not any(host in url for host in SHORT_HOSTS):
+    hostname = urlparse(url).hostname or ""
+    if not any(hostname == host or hostname.endswith(f".{host}") for host in SHORT_HOSTS):
         return url
-    location = await get_location(url)
-    return location or url
+    status, location = await get_location(url)
+    if 300 <= status < 400 and location:
+        return location
+    return url
 
 
 async def resolve_kugou_chain(chain: str) -> str:

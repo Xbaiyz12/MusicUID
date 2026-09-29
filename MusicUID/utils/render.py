@@ -6,9 +6,11 @@ import asyncio
 import importlib.util
 from typing import TYPE_CHECKING
 from pathlib import Path
+from dataclasses import dataclass
 
 import jinja2
 
+from gsuid_core import server as core_server
 from gsuid_core.logger import logger
 
 if TYPE_CHECKING:
@@ -47,6 +49,34 @@ _playwright: Playwright | None = None
 _browser: Browser | None = None
 _hint_logged = False
 
+# 跨插件重载存活的槽位名：core.server 模块不会被插件重载重新导入
+_HANDOVER_ATTR = "musicuid_render_handover"
+
+
+@dataclass
+class _RenderHandover:
+    """跨插件重载登记常驻实例，供下一代实例回收。
+
+    热重载会把本插件的 on_core_shutdown 钩子移除但从不调用，close_browser()
+    因此不会执行；只有把实例登记到 core 侧，下一代实例启动时才能关掉它。
+    """
+
+    playwright: Playwright | None = None
+    browser: Browser | None = None
+
+
+def _bind_handover() -> _RenderHandover:
+    """绑定跨重载共享的 handover 槽位。"""
+    holder: object = core_server.__dict__.setdefault(_HANDOVER_ATTR, _RenderHandover())
+    if isinstance(holder, _RenderHandover):
+        return holder
+    replacement = _RenderHandover()
+    core_server.__dict__[_HANDOVER_ATTR] = replacement
+    return replacement
+
+
+_handover = _bind_handover()
+
 
 def _log_hint(reason: str) -> None:
     """Report a broken render environment once, then stay quiet.
@@ -79,14 +109,37 @@ async def _get_browser() -> Browser | None:
     async with _lock:
         if _browser is not None:
             return _browser
+        runtime: Playwright | None = None
         try:
             runtime = await async_playwright().start()
             browser = await runtime.chromium.launch(args=CHROME_ARGS)
         except Exception as e:
+            # start() 成功而 launch() 失败时驱动进程只挂在 runtime 上，
+            # 不主动 stop 就会永久驻留，之后每张卡片都会再泄漏一个
+            if runtime is not None:
+                await runtime.stop()
             _log_hint(str(e))
             return None
         _playwright, _browser = runtime, browser
+        _handover.playwright, _handover.browser = runtime, browser
         return browser
+
+
+async def reclaim_stale_browser() -> None:
+    """回收上一代插件实例遗留的 Chromium（热重载不会触发 on_core_shutdown）。"""
+    stale_browser, stale_runtime = _handover.browser, _handover.playwright
+    _handover.browser, _handover.playwright = None, None
+    if stale_browser is not None and stale_browser is not _browser:
+        try:
+            await stale_browser.close()
+            logger.info("[MusicUID] 已回收上一代插件实例遗留的 Chromium")
+        except Exception as e:
+            logger.debug(f"[MusicUID] 关闭上一代 Chromium 失败：{e}")
+    if stale_runtime is not None and stale_runtime is not _playwright:
+        try:
+            await stale_runtime.stop()
+        except Exception as e:
+            logger.debug(f"[MusicUID] 停止上一代 playwright 运行时失败：{e}")
 
 
 async def _discard_browser() -> None:
@@ -95,6 +148,7 @@ async def _discard_browser() -> None:
     async with _lock:
         browser, runtime = _browser, _playwright
         _browser, _playwright = None, None
+        _handover.playwright, _handover.browser = None, None
     if browser is not None:
         try:
             await browser.close()
@@ -235,8 +289,10 @@ async def _render_playwright(html: str) -> bytes | None:
         return await page.screenshot(full_page=True, type="png")
     except Exception as e:
         logger.error(f"[MusicUID] 卡片渲染失败：{e}")
-        # 中途失败多半意味着浏览器实例已经坏了，丢弃以免后续卡片全部失败
-        await _discard_browser()
+        # 只在浏览器确实断开时才丢弃：并发渲染时无条件丢弃，
+        # 会把另一个协程正在截图的 page 一起关掉，表现为随机失败
+        if not browser.is_connected():
+            await _discard_browser()
         return None
     finally:
         try:

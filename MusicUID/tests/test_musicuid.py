@@ -42,7 +42,6 @@ from MusicUID.MusicUID.utils.json_tools import (
     get_obj,
     get_str,
     to_list,
-    get_bool,
     get_list,
     join_names,
 )
@@ -445,9 +444,6 @@ def test_scalar_readers_narrow_types() -> None:
     assert get_int(payload, "numeric_str") == 12
     assert get_int(payload, "bad_str", -1) == -1
     assert get_int(payload, "missing", 7) == 7
-    assert get_bool(payload, "flag_int") is True
-    assert get_bool(payload, "flag_bool") is False
-    assert get_bool(payload, "missing") is False
     assert get_id(payload, "n") == "5"
     assert get_id(payload, "s") == "晴天"
     assert get_id(payload, "wrong") == ""

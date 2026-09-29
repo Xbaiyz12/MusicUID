@@ -22,6 +22,9 @@ _pending_cleanup: set[asyncio.Task[None]] = set()
 # 正常歌曲远超 10KB；更小的响应是无版权占位页或试听片段
 MIN_AUDIO_BYTES = 10 * 1024
 
+# ffmpeg 压缩上限：卡住时必须回收，否则协程永久挂起、孤儿进程继续写盘
+COMPRESS_TIMEOUT_SEC: Final[float] = 120.0
+
 ILLEGAL_NAME_CHARS = '<>:"/\\|?*\n\r\t'
 
 
@@ -96,10 +99,25 @@ async def compress_for_voice(path: Path, bitrate: int) -> Path | None:
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        code = await proc.wait()
     except OSError as e:
         logger.warning(f"[MusicUID] ffmpeg 调用失败：{e}")
         return None
+
+    try:
+        code = await asyncio.wait_for(proc.wait(), timeout=COMPRESS_TIMEOUT_SEC)
+    except asyncio.TimeoutError:
+        # ffmpeg 卡住时要主动回收，否则它会成为孤儿进程继续写盘
+        proc.kill()
+        await proc.wait()
+        logger.warning("[MusicUID] ffmpeg 压缩超时，改用原始音频")
+        out.unlink(missing_ok=True)
+        return None
+    except asyncio.CancelledError:
+        proc.kill()
+        await proc.wait()
+        out.unlink(missing_ok=True)
+        raise
+
     if code != 0 or not out.exists():
         logger.warning(f"[MusicUID] ffmpeg 压缩失败（rc={code}）")
         out.unlink(missing_ok=True)
@@ -165,11 +183,14 @@ async def deliver_audio(
         logger.warning(f"[MusicUID] 音频下载失败：{e}")
         return "音频下载失败，可能该歌曲无版权或接口受限"
 
-    await asyncio.to_thread(audio_path.write_bytes, payload)
-    # 无版权曲目的外链只返回很小的占位响应，不该当成歌曲下发
+    # 无版权曲目的外链只返回很小的占位响应，不该当成歌曲下发（先判体积再落盘）
     if len(payload) < MIN_AUDIO_BYTES:
-        audio_path.unlink(missing_ok=True)
         return "音频下载失败：该歌曲可能无版权或需要 VIP"
+    try:
+        await asyncio.to_thread(audio_path.write_bytes, payload)
+    except OSError as e:
+        logger.warning(f"[MusicUID] 音频落盘失败：{e}")
+        return "音频下载失败：临时文件写入失败"
     file_name = _safe_file_name(song, suffix)
     # QQ 等平台对语音消息的体积限制很严：整首 320kbps 会被静默丢弃，先压小再发
     voice_path = audio_path
@@ -188,22 +209,32 @@ async def deliver_audio(
     # 文案与音频同一条消息发出，避免在 QQ 官方等通道多消耗一次回复额度
     if send_voice:
         try:
-            await bot.send([MessageSegment.text(header), voice_segment(voice_path, bot.bot_id, local_ref)])
-            sent = True
-            voice_ok = True
-        except Exception as e:
-            failures.append(f"语音发送失败（{e}）")
+            # base64 构造是同步阻塞的，交给线程做，别卡住整个事件循环
+            voice_part = await asyncio.to_thread(voice_segment, voice_path, bot.bot_id, local_ref)
+        except OSError as e:
+            failures.append(f"语音准备失败（{e}）")
+        else:
+            try:
+                await bot.send([MessageSegment.text(header), voice_part])
+                sent = True
+                voice_ok = True
+            except Exception as e:  # noqa: BLE001 - 单渠道失败不能影响另一个渠道
+                failures.append(f"语音发送失败（{e}）")
     if send_file:
-        attachment = MessageSegment.file(audio_path, file_name=file_name)
         try:
-            if sent:
-                await bot.send(attachment)
-            else:
-                await bot.send([MessageSegment.text(header), attachment])
-            sent = True
-            file_ok = True
-        except Exception as e:
-            failures.append(f"文件发送失败（{e}）")
+            attachment = await asyncio.to_thread(MessageSegment.file, audio_path, file_name=file_name)
+        except OSError as e:
+            failures.append(f"文件准备失败（{e}）")
+        else:
+            try:
+                if sent:
+                    await bot.send(attachment)
+                else:
+                    await bot.send([MessageSegment.text(header), attachment])
+                sent = True
+                file_ok = True
+            except Exception as e:  # noqa: BLE001 - 单渠道失败不能影响另一个渠道
+                failures.append(f"文件发送失败（{e}）")
 
     if not sent:
         audio_path.unlink(missing_ok=True)

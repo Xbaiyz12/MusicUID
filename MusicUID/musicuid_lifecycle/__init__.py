@@ -11,10 +11,10 @@ from gsuid_core.logger import logger
 from gsuid_core.server import on_core_start, on_core_shutdown
 
 from ..utils.http import close_client
-from ..utils.render import render_ready, close_browser
+from ..utils.login import auto_refresh_qq_job
+from ..utils.render import render_ready, close_browser, reclaim_stale_browser
 from ..musicuid_config import music_config
 from ..utils.resource.RESOURCE_PATH import TEMP_PATH
-from ..utils.login import auto_refresh_qq_job
 
 # 单个释放动作的等待上限，避免拖住进程退出
 RELEASE_TIMEOUT_SEC = 10
@@ -61,6 +61,7 @@ async def _run_setup(cmd: list[str]) -> bool:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=INSTALL_TIMEOUT_SEC)
     except asyncio.TimeoutError:
         proc.kill()
+        await proc.wait()
         logger.warning(f"[MusicUID] {' '.join(cmd)} 超时，已放弃")
         return False
     if proc.returncode == 0:
@@ -110,6 +111,8 @@ def pytakumi_available() -> bool:
 @on_core_start
 async def prepare_render_env() -> None:
     """启动时检测渲染环境，并登记 QQ 音乐凭证定时保活任务。"""
+    # 热重载不会触发 on_core_shutdown，上一代实例的 Chromium 只能在这里回收
+    await reclaim_stale_browser()
     scheduler.add_job(
         auto_refresh_qq_job,
         "interval",
@@ -146,6 +149,9 @@ async def release_resources() -> None:
             await asyncio.wait_for(closer(), timeout=RELEASE_TIMEOUT_SEC)
         except Exception as e:
             logger.warning(f"[MusicUID] 释放{label}失败：{e}")
+    from ..musicuid_login import cancel_login_tasks
+
+    await cancel_login_tasks()
     removed = clean_temp_files()
     if removed:
         logger.info(f"[MusicUID] 已清理 {removed} 个临时文件")

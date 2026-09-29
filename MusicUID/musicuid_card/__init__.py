@@ -22,6 +22,9 @@ STATUS_TEMPLATE = "status.html"
 # 多平台卡片与单平台卡片共用同一模板，只有 hero 主题不同
 MULTI_THEME = "multi"
 
+# 封面内联的体积上限：超大图会把整张卡片的 HTML 撑到几十 MB
+MAX_COVER_BYTES = 2 * 1024 * 1024
+
 
 @dataclass(frozen=True, slots=True)
 class PlatformResult:
@@ -124,6 +127,10 @@ async def _inline_covers(rows: list[dict[str, object]]) -> None:
             try:
                 resp = await get_client().get(url, timeout=3.0)
                 resp.raise_for_status()
+                if len(resp.content) > MAX_COVER_BYTES:
+                    logger.debug(f"[MusicUID] 封面过大已跳过（{len(resp.content)} bytes）")
+                    row["cover"] = ""
+                    return
                 mime = resp.headers.get("content-type", "image/jpeg").split(";")[0]
                 row["cover"] = f"data:{mime};base64,{base64.b64encode(resp.content).decode()}"
             except Exception as e:  # noqa: BLE001
@@ -148,6 +155,12 @@ async def send_song_list(
         play_hint: Command shown to the user for picking a song.
     """
     if not any(result.songs for result in results):
+        failed = [result for result in results if result.error]
+        if failed:
+            # 接口失败和「没有这首歌」不是一回事，不能把错误说成没搜到
+            detail = "\n".join(f"• {item.display_name}：{item.error}" for item in failed)
+            await bot.send(f"搜索失败，暂时查不到「{keyword}」：\n{detail}")
+            return
         names = "、".join(result.display_name for result in results)
         await bot.send(f"{names} 都没有搜到「{keyword}」相关的歌曲")
         return

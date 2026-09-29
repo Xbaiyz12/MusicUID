@@ -7,10 +7,10 @@ from .kugou import KugouLoginProvider
 from .netease import NeteaseLoginProvider
 from .qqmusic import (
     QQMusicLoginProvider,
-    auto_refresh_qq_job,
+    parse_qq_cookie,
     format_qq_cookie,
     load_qq_credential,
-    parse_qq_cookie,
+    auto_refresh_qq_job,
     refresh_qq_credential,
 )
 

@@ -28,8 +28,10 @@ from ..utils.provider.custom_api import test_custom_api_connection
 sv_login = SV("点歌登录", priority=2)
 
 _POLL_INTERVAL_SEC = 2.5
-_MAX_POLL_ROUNDS = 40  # 最多轮询 100 秒
-_active_tasks: set[asyncio.Task[None]] = set()
+# 二维码有效期约 120 秒，轮询必须覆盖满，否则最后 20 秒扫码的用户会白扫一次
+_MAX_POLL_ROUNDS = 56
+# 同一用户 + 同一平台只保留一个扫码任务，重复发起时取消上一个
+_poll_tasks: dict[str, asyncio.Task[None]] = {}
 
 QQ_COOKIE_GUIDE = (
     "【QQ音乐 Cookie 极简配置教程】\n\n"
@@ -124,6 +126,32 @@ def _mask_cookie(val: object) -> str:
     if len(val) <= 12:
         return val[:3] + "***" + val[-3:]
     return val[:6] + "******" + val[-6:]
+
+
+def _cookie_config_key(platform_name: str) -> str:
+    """把 provider 名映射到配置键：QQ 的 provider 名是 ``qq``，配置键是 ``qqmusic_cookie``。"""
+    if platform_name == "qq":
+        return "qqmusic_cookie"
+    return f"{platform_name}_cookie"
+
+
+def _cookie_missing_fields(platform_name: str, cookie: str) -> str:
+    """返回凭据里缺失的关键字段名（顿号分隔），空串表示通过校验。"""
+    if platform_name == "qq":
+        return "、".join(name for name in ("uin=", "qm_keyst=") if name not in cookie)
+    if platform_name == "netease":
+        return "" if "MUSIC_U" in cookie else "MUSIC_U"
+    return ""
+
+
+async def cancel_login_tasks() -> None:
+    """取消仍在轮询的扫码任务（插件重载或卸载时调用）。"""
+    tasks = list(_poll_tasks.values())
+    _poll_tasks.clear()
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 # ---------------------------------------------------------------- 凭据状态数据
@@ -549,6 +577,14 @@ async def handle_set_cookie(bot: Bot, ev: Event) -> None:
             await bot.send(QQ_COOKIE_GUIDE)
             return
         formatted = format_qq_cookie(raw_text)
+        missing = _cookie_missing_fields("qq", formatted)
+        if missing:
+            await bot.send(
+                f"❌ 没有从这段内容里识别到 {missing}，QQ 音乐 Cookie 必须同时包含 uin 与 qm_keyst。\n"
+                "• 发送「QQ音乐cookie」查看获取教程；\n"
+                "• 或改用「QQ登录」手机扫码绑定（凭据还能自动续期）。"
+            )
+            return
         music_config.set_config("qqmusic_cookie", formatted)
         logger.info("[MusicUID] 已成功更新 QQ 音乐 Cookie")
         await bot.send(f"✅ 已成功更新【QQ 音乐】Cookie 凭据！\n已格式化提取核心票据：\n{_mask_cookie(formatted)}")
@@ -562,6 +598,13 @@ async def handle_set_cookie(bot: Bot, ev: Event) -> None:
         cookie_to_save = raw_text
         if "MUSIC_U=" not in cookie_to_save and "=" not in cookie_to_save:
             cookie_to_save = f"MUSIC_U={cookie_to_save}"
+        missing = _cookie_missing_fields("netease", cookie_to_save)
+        if missing:
+            await bot.send(
+                f"❌ 没有从这段内容里识别到 {missing}，请复制网页端 Cookie 里 MUSIC_U 的值。\n"
+                "发送「网易云cookie」查看获取教程。"
+            )
+            return
         music_config.set_config("netease_cookie", cookie_to_save)
         logger.info("[MusicUID] 已成功更新网易云音乐 Cookie")
         await bot.send(f"✅ 已成功更新【网易云音乐】Cookie 凭据！\n已生效凭证：\n{_mask_cookie(cookie_to_save)}")
@@ -598,12 +641,20 @@ async def handle_set_cookie(bot: Bot, ev: Event) -> None:
         await bot.send(f"❌ 未知平台「{plat_keyword}」，支持的平台名称：网易云 (netease)、QQ音乐 (qq)、酷狗 (kugou)")
         return
 
-    config_key = f"{provider.platform_name}_cookie"
     if provider.platform_name == "qq":
         cookie_val = format_qq_cookie(cookie_val)
-        config_key = "qqmusic_cookie"
+    missing = _cookie_missing_fields(provider.platform_name, cookie_val)
+    if missing:
+        await bot.send(
+            f"❌ 没有从这段内容里识别到 {missing}，凭据可能无效。\n发送「{provider.display_name}cookie」查看获取方式。"
+        )
+        return
 
-    music_config.set_config(config_key, cookie_val)
+    config_key = _cookie_config_key(provider.platform_name)
+    if not music_config.set_config(config_key, cookie_val):
+        logger.error(f"[MusicUID] 保存 {provider.display_name} 凭据失败：配置键 {config_key} 不存在")
+        await bot.send("❌ 保存凭据失败，请检查插件配置是否完整")
+        return
     logger.info(f"[MusicUID] 已成功更新 {provider.display_name} Cookie")
     await bot.send(f"✅ 已成功更新【{provider.display_name}】Cookie 凭据！")
 
@@ -665,7 +716,12 @@ async def handle_login(bot: Bot, ev: Event) -> None:
 
     # 3. 创建扫码会话（QQ 音乐与酷狗均支持扫码）
     await bot.send(f"正在生成【{provider.display_name}】登录二维码，请稍候...")
-    session = await provider.create_qr_session()
+    try:
+        session = await provider.create_qr_session()
+    except Exception as e:  # noqa: BLE001 - 网络/解析异常不能让指令只说半句
+        logger.warning(f"[MusicUID] 生成 {provider.display_name} 二维码失败：{e}")
+        await bot.send(f"❌ 生成【{provider.display_name}】登录二维码失败，请稍后重试")
+        return
 
     if session.status == LoginStatus.FAILED or not session.qr_bytes:
         await bot.send(f"❌ 生成二维码失败：{session.message}")
@@ -677,10 +733,14 @@ async def handle_login(bot: Bot, ev: Event) -> None:
     ]
     await bot.send(msg)
 
-    # 4. 启动后台轮询任务
+    # 4. 启动后台轮询任务：同一用户同一平台只保留一个，重复发起先取消旧的
+    task_key = f"{provider.platform_name}:{ev.user_id}"
+    previous = _poll_tasks.pop(task_key, None)
+    if previous is not None and not previous.done():
+        previous.cancel()
     task = asyncio.create_task(_poll_login_status(bot, ev, provider, session))
-    _active_tasks.add(task)
-    task.add_done_callback(_active_tasks.discard)
+    _poll_tasks[task_key] = task
+    task.add_done_callback(lambda _task, key=task_key: _poll_tasks.pop(key, None))
 
 
 async def _poll_login_status(
@@ -705,8 +765,11 @@ async def _poll_login_status(
             logger.info(f"[MusicUID] 用户已扫描 {provider.display_name} 二维码，等待手机确认")
 
         elif session.status == LoginStatus.SUCCESS:
-            config_key = f"{provider.platform_name}_cookie"
-            music_config.set_config(config_key, session.cookie)
+            config_key = _cookie_config_key(provider.platform_name)
+            if not music_config.set_config(config_key, session.cookie):
+                logger.error(f"[MusicUID] {provider.display_name} 凭据写入失败：配置键 {config_key} 不存在")
+                await bot.send(f"⚠️【{provider.display_name}】登录成功，但凭据写入失败，请检查插件配置后重试")
+                return
             logger.info(f"[MusicUID] {provider.display_name} 扫码登录成功，凭证已保存")
             success_tip = (
                 f"🎉【{provider.display_name}】扫码登录成功！\n"
@@ -723,16 +786,7 @@ async def _poll_login_status(
 
         elif session.status == LoginStatus.FAILED:
             logger.warning(f"[MusicUID] {provider.display_name} 登录失败：{session.message}")
-            if provider.platform_name == "netease":
-                await bot.send(
-                    f"❌【网易云音乐】扫码登录失败：{session.message}\n\n"
-                    "💡 原因排查与解决建议：\n"
-                    "• 网易云官方近期对第三方扫码接口加强了风控策略（异地 IP、非常用设备或未绑定手机可能被拦截）；\n"
-                    "• 建议直接提取 `MUSIC_U` Cookie 凭据导入：\n"
-                    "  发送「网易云cookie」查看极简获取教程，或直接发送「网易云cookie 你的MUSIC_U值」完成绑定。"
-                )
-            else:
-                await bot.send(f"❌【{provider.display_name}】登录失败：{session.message}")
+            await bot.send(f"❌【{provider.display_name}】登录失败：{session.message}")
             return
 
     logger.info(f"[MusicUID] {provider.display_name} 扫码轮询超时结束")

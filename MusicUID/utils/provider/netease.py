@@ -6,8 +6,8 @@ from dataclasses import replace
 from gsuid_core.logger import logger
 
 from .base import SongInfo, SongCollection
-from .custom_api import resolve_custom_api
 from ..http import MusicRequestError, get_json, post_json, get_location
+from .custom_api import resolve_custom_api
 from ..json_tools import get_id, to_obj, get_int, get_obj, get_str, to_list, get_list, join_names
 from ...musicuid_config import music_config
 
@@ -242,18 +242,21 @@ class NeteaseProvider:
         if url:
             return url
         target = f"{OUTER_URL}?id={song.song_id}.mp3"
-        location = await get_location(target)
-        # 可播放响应有两种：302 跳到 CDN，或直接 200 返回音频流（此时没有 Location）。
-        # 所以只有明确跳到 404 页才算不可播放，其余交给下载阶段判断。
-        if "404" not in location:
+        status, location = await get_location(target)
+        # 可播放有两种形态：302 跳到 CDN，或 200 直接返回音频流（此时没有 Location）。
+        # 403/429 之类的前置拒绝两者都不是，必须区分开，否则会把错误页当成歌曲下发
+        if status in (301, 302, 303, 307, 308):
+            if "404" not in location:
+                return target
+        elif status == 200:
             return target
+        else:
+            logger.debug(f"[MusicUID] 网易云外链未下发 {song.name}：status={status}")
 
         if priority != "custom_first":
             custom_res = await resolve_custom_api(song)
             if custom_res:
-                logger.info(
-                    f"[MusicUID] 网易云官方未下发《{song.name}》，触发自建 API 兜底取流"
-                )
+                logger.info(f"[MusicUID] 网易云官方未下发《{song.name}》，触发自建 API 兜底取流")
                 return custom_res
 
         return ""
