@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 import asyncio
 
 from gsuid_core.sv import SV
@@ -19,8 +20,9 @@ from ..utils.login import (
     load_qq_credential,
     refresh_qq_credential,
 )
-from ..utils.provider.custom_api import test_custom_api_connection
+from ..musicuid_card import send_status_card
 from ..musicuid_config import music_config
+from ..utils.provider.custom_api import test_custom_api_connection
 
 # 优先级设为 2，优先于通用搜索指令 (priority=5) 匹配
 sv_login = SV("点歌登录", priority=2)
@@ -124,6 +126,139 @@ def _mask_cookie(val: object) -> str:
     return val[:6] + "******" + val[-6:]
 
 
+# ---------------------------------------------------------------- 凭据状态数据
+
+
+def _netease_status(raw: object) -> dict[str, object]:
+    """组装网易云凭据的状态卡片条目。"""
+    if isinstance(raw, str) and raw.strip():
+        return {
+            "key": "netease",
+            "icon": "🔴",
+            "name": "网易云音乐",
+            "state": "ok",
+            "state_text": "已绑定",
+            "value": _mask_cookie(raw),
+            "note": "VIP 歌曲与高音质档位已生效",
+        }
+    return {
+        "key": "netease",
+        "icon": "🔴",
+        "name": "网易云音乐",
+        "state": "off",
+        "state_text": "未配置",
+        "value": "未绑定 MUSIC_U",
+        "note": "当前只能播放免费曲目（128kbps）",
+    }
+
+
+def _qq_status(raw: object) -> dict[str, object]:
+    """组装 QQ 音乐凭据的状态卡片条目。"""
+    credential = load_qq_credential()
+    if credential is not None:
+        left_days = max(
+            0.0,
+            (credential["musickey_create_time"] + credential["key_expires_in"] - time.time()) / 86400,
+        )
+        owner = credential["nick"] or credential["musicid"]
+        return {
+            "key": "qq",
+            "icon": "🟢",
+            "name": "QQ 音乐",
+            "state": "ok",
+            "state_text": "长效续期",
+            "value": f"移动协议已绑定：{owner}",
+            "note": f"剩余约 {left_days:.1f} 天，后台定时自动续签",
+        }
+
+    if isinstance(raw, str) and raw.strip():
+        return {
+            "key": "qq",
+            "icon": "🟢",
+            "name": "QQ 音乐",
+            "state": "warn",
+            "state_text": "普通 Cookie",
+            "value": _mask_cookie(raw),
+            "note": "建议发送「QQ登录」扫码升级为长效续期",
+        }
+    return {
+        "key": "qq",
+        "icon": "🟢",
+        "name": "QQ 音乐",
+        "state": "off",
+        "state_text": "未配置",
+        "value": "未绑定移动端凭据",
+        "note": "发送「QQ登录」手机扫码即可绑定",
+    }
+
+
+def _kugou_status(raw: object) -> dict[str, object]:
+    """组装酷狗凭据的状态卡片条目。"""
+    if isinstance(raw, str) and raw.strip():
+        return {
+            "key": "kugou",
+            "icon": "🔵",
+            "name": "酷狗音乐",
+            "state": "ok",
+            "state_text": "已绑定",
+            "value": _mask_cookie(raw),
+            "note": "需单独购买的专辑曲目可播 60 秒试听",
+        }
+    return {
+        "key": "kugou",
+        "icon": "🔵",
+        "name": "酷狗音乐",
+        "state": "off",
+        "state_text": "未配置",
+        "value": "未绑定酷狗 Cookie",
+        "note": "发送「酷狗登录」手机扫码即可绑定",
+    }
+
+
+def _custom_api_status(url: object, priority: object) -> dict[str, object]:
+    """组装自建音源服务的状态卡片条目。"""
+    if isinstance(url, str) and url.strip():
+        mode = "优先自建" if priority == "custom_first" else "官方优先 · 自建兜底"
+        return {
+            "key": "custom",
+            "icon": "🌐",
+            "name": "自建 / 第三方音源",
+            "state": "ok",
+            "state_text": "已启用",
+            "value": url,
+            "note": f"调度模式：{mode}",
+        }
+    return {
+        "key": "custom",
+        "icon": "🌐",
+        "name": "自建 / 第三方音源",
+        "state": "off",
+        "state_text": "未配置",
+        "value": "未绑定外部音源服务",
+        "note": "发送「设置自建api http://...」接入",
+    }
+
+
+def _status_text(platforms: list[dict[str, object]]) -> str:
+    """把状态条目拼成纯文本，供卡片渲染不可用时回退。"""
+    lines = ["【MusicUID 音乐平台凭据与音源状态】", ""]
+    for plat in platforms:
+        lines.append(f"• {plat['icon']} {plat['name']}: {plat['value']}")
+        note = plat["note"]
+        if note:
+            lines.append(f"   {note}")
+    lines.extend(
+        [
+            "",
+            "💡 登录与配置方式：",
+            "• QQ/酷狗：发送「QQ登录」或「酷狗登录」直接扫码绑定；",
+            "• 网易云：发送「网易云cookie 你的值」完成绑定；",
+            "• 自建服务：发送「设置自建api http://...」或「测试自建api」。",
+        ]
+    )
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------- 白名单管理
 
 
@@ -140,11 +275,7 @@ async def add_whitelist(bot: Bot, ev: Event) -> None:
 
     target_ids = _extract_user_ids(ev)
     if not target_ids:
-        await bot.send(
-            "请指定要添加的用户 ID 或 @用户，例如：\n"
-            "• 点歌加白 12345678\n"
-            "• @用户 点歌加白"
-        )
+        await bot.send("请指定要添加的用户 ID 或 @用户，例如：\n• 点歌加白 12345678\n• @用户 点歌加白")
         return
 
     current = get_whitelist()
@@ -176,11 +307,7 @@ async def remove_whitelist(bot: Bot, ev: Event) -> None:
 
     target_ids = _extract_user_ids(ev)
     if not target_ids:
-        await bot.send(
-            "请指定要移除的用户 ID 或 @用户，例如：\n"
-            "• 点歌删白 12345678\n"
-            "• @用户 点歌删白"
-        )
+        await bot.send("请指定要移除的用户 ID 或 @用户，例如：\n• 点歌删白 12345678\n• @用户 点歌删白")
         return
 
     current = get_whitelist()
@@ -233,50 +360,26 @@ async def check_login_status(bot: Bot, ev: Event) -> None:
         await bot.send("❌ 权限不足：仅主人及登录白名单用户可查询凭据状态。")
         return
 
-    netease_ck = music_config.get_config("netease_cookie").data
-    qq_ck = music_config.get_config("qqmusic_cookie").data
-    kugou_ck = music_config.get_config("kugou_cookie").data
-    custom_api = music_config.get_config("custom_api_url").data
-    custom_priority = music_config.get_config("custom_api_priority").data
-
-    qq_cred = load_qq_credential()
-    if qq_cred:
-        import time
-
-        left_days = max(
-            0.0,
-            (
-                qq_cred["musickey_create_time"]
-                + qq_cred["key_expires_in"]
-                - time.time()
-            )
-            / 86400,
-        )
-        qq_info = (
-            f"{_mask_cookie(qq_ck)}（移动协议已绑定: {qq_cred['nick'] or qq_cred['musicid']}，"
-            f"长效自动续期中，剩余约 {left_days:.1f} 天）"
-        )
-    else:
-        qq_info = f"{_mask_cookie(qq_ck)}（普通Cookie模式，推荐发送「QQ登录」升级长效续期）"
-
-    custom_info = (
-        f"{custom_api}（模式: {'优先自建' if custom_priority == 'custom_first' else '官方优先/自建兜底'}）"
-        if custom_api
-        else "未配置（使用「设置自建api <地址>」绑定）"
-    )
-
-    status_text = (
-        "【MusicUID 音乐平台凭据与音源状态】\n\n"
-        f"• 🔴 网易云音乐: {_mask_cookie(netease_ck)}\n"
-        f"• 🟢 QQ 音乐: {qq_info}\n"
-        f"• 🔵 酷狗音乐: {_mask_cookie(kugou_ck)}\n"
-        f"• 🌐 自建/第三方API: {custom_info}\n\n"
-        "💡 登录与配置方式：\n"
-        "• QQ/酷狗：发送「QQ登录」或「酷狗登录」直接扫码绑定；\n"
-        "• 网易云：发送「网易云cookie 你的值」完成绑定；\n"
-        "• 自建服务：发送「设置自建api http://...」或「测试自建api」。"
-    )
-    await bot.send(status_text)
+    platforms = [
+        _netease_status(music_config.get_config("netease_cookie").data),
+        _qq_status(music_config.get_config("qqmusic_cookie").data),
+        _kugou_status(music_config.get_config("kugou_cookie").data),
+        _custom_api_status(
+            music_config.get_config("custom_api_url").data,
+            music_config.get_config("custom_api_priority").data,
+        ),
+    ]
+    bound = sum(1 for plat in platforms if plat["state"] != "off")
+    data: dict[str, object] = {
+        "platforms": platforms,
+        "summary": f"共 {len(platforms)} 项音源 · 已绑定 {bound} 项凭据",
+        "tips": [
+            {"label": "QQ / 酷狗", "text": "发送「QQ登录」或「酷狗登录」手机扫码绑定"},
+            {"label": "网易云", "text": "发送「网易云cookie 你的值」完成绑定"},
+            {"label": "自建服务", "text": "发送「设置自建api http://...」或「测试自建api」"},
+        ],
+    }
+    await send_status_card(bot, data, _status_text(platforms))
 
 
 @sv_login.on_command(
@@ -312,9 +415,7 @@ async def handle_set_custom_api(bot: Bot, ev: Event) -> None:
     music_config.set_config("custom_api_url", url)
     logger.info(f"[MusicUID] 已配置自建音源 API: {url}")
     await bot.send(
-        f"✅ 已成功配置自建音源服务地址！\n"
-        f"• 端点: {url}\n"
-        "💡 建议发送「测试自建api」验证服务连通性与可用性。"
+        f"✅ 已成功配置自建音源服务地址！\n• 端点: {url}\n💡 建议发送「测试自建api」验证服务连通性与可用性。"
     )
 
 
@@ -397,9 +498,7 @@ async def handle_refresh_qq(bot: Bot, ev: Event) -> None:
 
     cred = load_qq_credential()
     if cred is None:
-        await bot.send(
-            "❌ 未检测到 QQ 音乐移动端协议凭据，请先发送「QQ登录」进行扫码绑定！"
-        )
+        await bot.send("❌ 未检测到 QQ 音乐移动端协议凭据，请先发送「QQ登录」进行扫码绑定！")
         return
 
     await bot.send("正在请求 QQ 音乐官方服务器刷新凭据，请稍候...")
@@ -560,8 +659,7 @@ async def handle_login(bot: Bot, ev: Event) -> None:
     if provider.platform_name == "netease":
         await bot.send(
             "⚠️【网易云音乐】官方近期已关闭并拦截第三方扫码登录（APP 扫码会提示升级或切换登录方式）。\n\n"
-            "💡 建议通过网页端提取 `MUSIC_U` 直接导入绑定（仅需 10 秒）：\n"
-            + NETEASE_COOKIE_GUIDE
+            "💡 建议通过网页端提取 `MUSIC_U` 直接导入绑定（仅需 10 秒）：\n" + NETEASE_COOKIE_GUIDE
         )
         return
 
@@ -575,9 +673,7 @@ async def handle_login(bot: Bot, ev: Event) -> None:
 
     msg = [
         MessageSegment.image(session.qr_bytes),
-        MessageSegment.text(
-            f"\n{session.message}\n（二维码有效期约 2 分钟，请打开对应 APP 扫码并确认登录）"
-        ),
+        MessageSegment.text(f"\n{session.message}\n（二维码有效期约 2 分钟，请打开对应 APP 扫码并确认登录）"),
     ]
     await bot.send(msg)
 

@@ -1027,6 +1027,84 @@ def test_send_help_card_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     assert sent_messages == ["纯文本帮助信息"]
 
 
+def test_status_card_template_render() -> None:
+    from MusicUID.MusicUID.utils.render import _env
+
+    data = {
+        "summary": "共 4 项音源 · 已绑定 3 项凭据",
+        "platforms": [
+            {
+                "key": "netease",
+                "icon": "🔴",
+                "name": "网易云音乐",
+                "state": "ok",
+                "state_text": "已绑定",
+                "value": "MUSIC_U=12****89",
+                "note": "VIP 歌曲与高音质档位已生效",
+            },
+            {
+                "key": "custom",
+                "icon": "🌐",
+                "name": "自建 / 第三方音源",
+                "state": "off",
+                "state_text": "未配置",
+                "value": "未绑定外部音源服务",
+                "note": "",
+            },
+        ],
+        "tips": [{"label": "网易云", "text": "发送「网易云cookie 你的值」完成绑定"}],
+    }
+    html = _env.get_template("status.html").render(data=data)
+    assert "音乐平台凭据状态" in html
+    assert "共 4 项音源 · 已绑定 3 项凭据" in html
+    assert "网易云音乐" in html
+    assert "state s-ok" in html
+    assert "state s-off" in html
+
+
+def test_status_entries_and_card_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    from MusicUID.MusicUID import musicuid_card as card_module, musicuid_login as login_module
+    from MusicUID.MusicUID.musicuid_config import music_config
+
+    sent_messages: list[object] = []
+
+    class MockBot:
+        async def send(self, msg: object) -> None:
+            sent_messages.append(msg)
+
+    # 1. 状态条目：未配置/已配置分别落到 off 与 ok
+    assert login_module._netease_status("")["state"] == "off"
+    assert login_module._netease_status("test_music_u_value")["state"] == "ok"
+    assert login_module._kugou_status("")["state"] == "off"
+    custom = login_module._custom_api_status("http://127.0.0.1:3300", "custom_first")
+    assert custom["state"] == "ok"
+    assert "优先自建" in str(custom["note"])
+
+    # 2. 纯文本回退仍带状态标题（旧指令行为不变）
+    text = login_module._status_text([login_module._netease_status("")])
+    assert "MusicUID 音乐平台凭据与音源状态" in text
+
+    # 3. render_card 关闭时直接发纯文本
+    monkeypatch.setattr(music_config, "get_config", lambda name: SimpleNamespace(data=False))
+    bot = MockBot()
+    payload: dict[str, object] = {"platforms": [], "summary": "", "tips": []}
+    asyncio.run(card_module.send_status_card(bot, payload, "纯文本状态"))
+    assert sent_messages == ["纯文本状态"]
+
+    # 4. render_card 打开且渲染成功时发送图片段
+    sent_messages.clear()
+    monkeypatch.setattr(music_config, "get_config", lambda name: SimpleNamespace(data=True))
+
+    async def fake_render(template: str, data: dict[str, object]) -> bytes:
+        assert template == "status.html"
+        return b"\x89PNG-fake"
+
+    monkeypatch.setattr(card_module, "render_card", fake_render)
+    asyncio.run(card_module.send_status_card(bot, payload, "纯文本状态"))
+    assert len(sent_messages) == 1
+    assert "image" in str(sent_messages[0])
+
+
 def test_command_conflict_interception(monkeypatch: pytest.MonkeyPatch) -> None:
     from MusicUID.MusicUID.musicuid_play import song_request
     from MusicUID.MusicUID.musicuid_config import music_config
@@ -1128,8 +1206,3 @@ def test_handle_login_direct_trigger(monkeypatch: pytest.MonkeyPatch) -> None:
     asyncio.run(handle_login(bot, ev_qq))
     assert len(sent_messages) >= 1
     assert "正在生成【QQ音乐】登录二维码" in str(sent_messages[0])
-
-
-
-
-

@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MusicUID 凭据状态</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      width: fit-content;
+      height: fit-content;
+      background: #f6f6f8 !important;
+      font-family: "MiSans", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+      color: #2b2b33;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: geometricPrecision;
+    }
+
+    .page { display: block; width: fit-content; padding: 16px; background: #f6f6f8; }
+
+    .card {
+      width: 560px;
+      border-radius: 26px;
+      overflow: hidden;
+      background: #fff;
+      border: 1px solid rgba(0, 0, 0, 0.06);
+      box-shadow: 0 14px 28px rgba(20, 20, 40, 0.1);
+    }
+
+    .hero {
+      padding: 24px 24px 20px;
+      color: #fff;
+      background: linear-gradient(135deg, #7b6ce0 0%, #4c3fa8 100%);
+    }
+
+    .hero-top { display: flex; align-items: flex-start; gap: 14px; }
+
+    .brand {
+      width: 46px;
+      height: 46px;
+      border-radius: 15px;
+      background: rgba(255, 255, 255, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.34);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 23px;
+      flex-shrink: 0;
+    }
+
+    .hero-text { flex: 1; min-width: 0; }
+
+    .eyebrow { font-size: 11px; font-weight: 700; letter-spacing: 2.4px; opacity: 0.86; }
+
+    .title { margin-top: 6px; font-size: 24px; font-weight: 800; line-height: 1.2; }
+
+    .subtitle { margin-top: 6px; font-size: 12.5px; opacity: 0.92; line-height: 1.4; }
+
+    .pill {
+      flex-shrink: 0;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.18);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .body { padding: 16px 16px 12px; }
+
+    .plat {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 11px 13px;
+      border-radius: 16px;
+      background: linear-gradient(165deg, #ffffff 0%, #fbfbfd 100%);
+      border: 1px solid rgba(0, 0, 0, 0.06);
+      margin-bottom: 8px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .plat::before {
+      content: "";
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 3.5px;
+      background: var(--pc, #999);
+      opacity: 0.85;
+    }
+
+    .plat.p-netease { --pc: #ec4141; --psoft: #fdeceb; }
+    .plat.p-qq      { --pc: #31c27c; --psoft: #e9f9f1; }
+    .plat.p-kugou   { --pc: #2ca2f9; --psoft: #e8f4fd; }
+    .plat.p-custom  { --pc: #7b6ce0; --psoft: #efedfd; }
+
+    .plat-icon {
+      width: 38px;
+      height: 38px;
+      border-radius: 13px;
+      background: var(--psoft, #f2f2f5);
+      border: 1px solid rgba(0, 0, 0, 0.05);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+
+    .plat-main { flex: 1; min-width: 0; }
+
+    .plat-name { font-size: 13.5px; font-weight: 800; color: var(--pc, #333); letter-spacing: 0.2px; }
+
+    .plat-value {
+      margin-top: 3px;
+      font-size: 11.5px;
+      color: #6e6e7a;
+      line-height: 1.35;
+      word-break: break-all;
+      font-family: "Cascadia Code", "Consolas", monospace;
+    }
+
+    .plat-note { margin-top: 3px; font-size: 10.5px; color: #9a9aa4; line-height: 1.35; }
+
+    .state {
+      flex-shrink: 0;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 10.5px;
+      font-weight: 800;
+      letter-spacing: 0.3px;
+      white-space: nowrap;
+    }
+
+    .state.s-ok   { background: #e8f8ef; color: #1f9d55; border: 1px solid rgba(31, 157, 85, 0.22); }
+    .state.s-warn { background: #fdf3e0; color: #d9822b; border: 1px solid rgba(217, 130, 43, 0.22); }
+    .state.s-off  { background: #f2f2f5; color: #9a9aa4; border: 1px solid rgba(0, 0, 0, 0.06); }
+
+    .tip {
+      margin-top: 6px;
+      padding: 11px 13px;
+      border-radius: 14px;
+      background: #efedfd;
+      font-size: 11.5px;
+      color: #6d6d78;
+      line-height: 1.6;
+    }
+
+    .tip-head { font-weight: 800; color: #6b5bd2; margin-bottom: 4px; }
+
+    .tip-row { display: flex; gap: 6px; }
+    .tip-row .k { color: #6b5bd2; font-weight: 700; flex-shrink: 0; }
+
+    .footer {
+      margin-top: 10px;
+      padding: 2px 4px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 10.5px;
+      color: #9a9aa4;
+    }
+
+    .footer .brand-name { color: #6b5bd2; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="card">
+      <div class="hero">
+        <div class="hero-top">
+          <div class="brand">🎵</div>
+          <div class="hero-text">
+            <div class="eyebrow">MUSICUID · CREDENTIAL STATUS</div>
+            <div class="title">音乐平台凭据状态</div>
+            <div class="subtitle">{{ data.summary }}</div>
+          </div>
+          <div class="pill">点歌状态</div>
+        </div>
+      </div>
+
+      <div class="body">
+        {% for plat in data.platforms %}
+        <div class="plat p-{{ plat.key }}">
+          <div class="plat-icon">{{ plat.icon }}</div>
+          <div class="plat-main">
+            <div class="plat-name">{{ plat.name }}</div>
+            <div class="plat-value">{{ plat.value }}</div>
+            {% if plat.note %}<div class="plat-note">{{ plat.note }}</div>{% endif %}
+          </div>
+          <div class="state s-{{ plat.state }}">{{ plat.state_text }}</div>
+        </div>
+        {% endfor %}
+
+        <div class="tip">
+          <div class="tip-head">💡 登录与配置方式</div>
+          {% for row in data.tips %}
+          <div class="tip-row"><span class="k">{{ row.label }}</span><span>{{ row.text }}</span></div>
+          {% endfor %}
+        </div>
+
+        <div class="footer">
+          <div>MusicUID · GsCore Multi-platform Music Plugin</div>
+          <div class="brand-name">MusicUID</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

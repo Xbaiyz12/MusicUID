@@ -17,6 +17,7 @@ from ..musicuid_config import music_config
 
 CARD_TEMPLATE = "song_list.html"
 HELP_TEMPLATE = "help.html"
+STATUS_TEMPLATE = "status.html"
 
 # 多平台卡片与单平台卡片共用同一模板，只有 hero 主题不同
 MULTI_THEME = "multi"
@@ -333,3 +334,20 @@ async def send_help_card(bot: Bot, help_text: str) -> None:
 
     await bot.send(help_text)
 
+
+async def send_status_card(bot: Bot, data: dict[str, object], fallback_text: str) -> None:
+    """Send the credential status card, falling back to plain text.
+
+    Args:
+        bot: Bot wrapper bound to the current event.
+        data: Template payload for ``status.html``.
+        fallback_text: Plain text used when rendering is unavailable.
+    """
+    if music_config.get_config("render_card").data:
+        png = await render_card(STATUS_TEMPLATE, data)
+        if png is not None:
+            await bot.send(MessageSegment.image(png))
+            return
+        logger.debug("[MusicUID] 状态卡片渲染不可用，回退纯文本")
+
+    await bot.send(fallback_text)
