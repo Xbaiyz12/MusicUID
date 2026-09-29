@@ -30,7 +30,9 @@ CARD_CSS_WIDTH = 592
 
 _HINT = (
     "卡片渲染不可用：请在 GsCore 的 Python 环境执行 pip install playwright 与 "
-    "python -m playwright install chromium，然后重载插件；期间指令仍以纯文本返回。"
+    "python -m playwright install chromium，然后重载插件；若依赖已装仍报错，"
+    "多半是浏览器无法在临时目录建文件（EPERM），请检查 TEMP/TMP 指向的目录是否可写。"
+    "期间指令仍以纯文本返回。"
 )
 
 # 卡片数据含用户可控文本（关键词/歌名），autoescape 必须开着
@@ -184,7 +186,7 @@ async def _render_pytakumi(html: str) -> bytes | None:
     try:
         from gsuid_core.utils.html_render import render_html_to_bytes
     except ImportError as e:
-        logger.debug(f"[MusicUID] pytakumi 不可用，改用浏览器渲染：{e}")
+        logger.warning(f"[MusicUID] pytakumi 不可用，改用浏览器渲染：{e}")
         return None
     try:
         return await render_html_to_bytes(
@@ -197,7 +199,7 @@ async def _render_pytakumi(html: str) -> bytes | None:
             lang="zh",
         )
     except Exception as e:
-        logger.debug(f"[MusicUID] pytakumi 渲染失败，改用浏览器渲染：{e}")
+        logger.warning(f"[MusicUID] pytakumi 渲染失败，改用浏览器渲染：{e}")
         return None
 
 

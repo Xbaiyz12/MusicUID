@@ -1058,7 +1058,7 @@ def test_command_conflict_interception(monkeypatch: pytest.MonkeyPatch) -> None:
     ev_status = Event(user_id="10001", user_pm=1, text="状态", command="点歌")
     asyncio.run(song_request(bot, ev_status))
     assert len(sent_messages) >= 1
-    assert "MusicUID 音乐平台凭据状态" in str(sent_messages[0])
+    assert "MusicUID 音乐平台凭据与音源状态" in str(sent_messages[0])
 
 
 def test_qq_cookie_direct_command(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1122,12 +1122,12 @@ def test_handle_login_direct_trigger(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(sent_messages) >= 1
     assert "网易云音乐 Cookie 获取指引" in str(sent_messages[0])
 
-    # 4. 发送 "QQ登录" -> 输出 QQ 音乐配置教程
+    # 4. 发送 "QQ登录" -> 直接进入移动端扫码流程
     sent_messages.clear()
     ev_qq = Event(user_id="10001", user_pm=1, command="QQ登录", text="")
     asyncio.run(handle_login(bot, ev_qq))
     assert len(sent_messages) >= 1
-    assert "QQ音乐 Cookie 极简配置教程" in str(sent_messages[0])
+    assert "正在生成【QQ音乐】登录二维码" in str(sent_messages[0])
 
 
 
