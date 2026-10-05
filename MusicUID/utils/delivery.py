@@ -25,6 +25,12 @@ MIN_AUDIO_BYTES = 10 * 1024
 # ffmpeg 压缩上限：卡住时必须回收，否则协程永久挂起、孤儿进程继续写盘
 COMPRESS_TIMEOUT_SEC: Final[float] = 120.0
 
+# 语音最低码率：再低就不是「音质差」而是听不清了
+MIN_VOICE_KBPS: Final[int] = 64
+
+# 从这个码率起保留立体声（低码率下立体声会摊薄每声道的信息量）
+STEREO_MIN_KBPS: Final[int] = 128
+
 ILLEGAL_NAME_CHARS = '<>:"/\\|?*\n\r\t'
 
 
@@ -70,29 +76,50 @@ def voice_segment(path: Path, bot_id: str, force_local: bool) -> Message:
     return MessageSegment.record(path)
 
 
-async def compress_for_voice(path: Path, bitrate: int) -> Path | None:
+def pick_voice_bitrate(max_kbps: int, limit_bytes: int, duration_sec: int) -> int:
+    """Pick the highest bitrate that still fits the voice size limit.
+
+    语音通道有体积天花板，码率 × 时长就是体积，所以「压多狠」不该写死：
+    短歌可以在上限内保住接近原始的码率，长歌才需要真的降。
+
+    Args:
+        max_kbps: 配置的码率上限（``voice_bitrate``）。
+        limit_bytes: 语音体积上限（``voice_max_mb`` 换算后的字节）。
+        duration_sec: 歌曲时长，``0`` 表示未知。
+
+    Returns:
+        目标码率（kbps），不低于 :data:`MIN_VOICE_KBPS`。
+    """
+    if duration_sec <= 0:
+        return max_kbps
+    by_size = int(limit_bytes * 8 / duration_sec / 1000)
+    return max(MIN_VOICE_KBPS, min(max_kbps, by_size))
+
+
+async def compress_for_voice(path: Path, bitrate: int, keep_stereo: bool) -> Path | None:
     """Shrink an audio file with ffmpeg so it fits platform voice limits.
 
-    整首 320kbps 的歌（10MB 级）作为语音会被 QQ 静默丢弃，压成单声道低码率后
-    体积只有原来的几分之一。
+    整首 320kbps 的歌（10MB 级）作为语音会被 QQ 静默丢弃，所以要降到体积上限内；
+    但降多少由 :func:`pick_voice_bitrate` 按剩余空间决定，而不是一律压到最低档。
 
     Args:
         path: Downloaded audio file.
         bitrate: Target mp3 bitrate in kbps.
+        keep_stereo: 是否保留源声道；低码率下立体声会摊薄每声道的信息量，反而更难听。
 
     Returns:
         The compressed file, or ``None`` when ffmpeg is unavailable or failed
         (callers then keep using the original file).
     """
     out = path.with_name(f"{path.stem}_v.mp3")
+    channel_args = [] if keep_stereo else ["-ac", "1"]
     try:
         proc = await asyncio.create_subprocess_exec(
             "ffmpeg",
             "-y",
             "-i",
             str(path),
-            "-ac",
-            "1",
+            *channel_args,
             "-b:a",
             f"{bitrate}k",
             str(out),
@@ -192,14 +219,20 @@ async def deliver_audio(
         logger.warning(f"[MusicUID] 音频落盘失败：{e}")
         return "音频下载失败：临时文件写入失败"
     file_name = _safe_file_name(song, suffix)
-    # QQ 等平台对语音消息的体积限制很严：整首 320kbps 会被静默丢弃，先压小再发
+    # QQ 等平台对语音消息的体积限制很严：整首 320kbps 会被静默丢弃，先压小再发。
+    # 压到多低由时长与体积上限算出来，不做一刀切，否则控制台里的音质档位白设
     voice_path = audio_path
-    if send_voice and len(payload) > voice_max_mb * 1024 * 1024:
-        compressed = await compress_for_voice(audio_path, voice_bitrate)
+    limit_bytes = voice_max_mb * 1024 * 1024
+    if send_voice and len(payload) > limit_bytes:
+        target_kbps = pick_voice_bitrate(voice_bitrate, limit_bytes, song.duration_sec)
+        keep_stereo = target_kbps >= STEREO_MIN_KBPS
+        compressed = await compress_for_voice(audio_path, target_kbps, keep_stereo)
         if compressed is not None:
             voice_path = compressed
             logger.info(
-                f"[MusicUID] 语音压缩 {len(payload)} → {compressed.stat().st_size} bytes（{voice_bitrate}kbps 单声道）"
+                f"[MusicUID] 语音压缩 {len(payload)} → {compressed.stat().st_size} bytes"
+                f"（{target_kbps}kbps {'立体声' if keep_stereo else '单声道'}，"
+                f"源音频超过 {voice_max_mb}MB 语音上限）"
             )
     sent = False
     voice_ok = False

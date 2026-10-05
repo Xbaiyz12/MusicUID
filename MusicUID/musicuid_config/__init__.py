@@ -84,12 +84,18 @@ CONFIG_DEFAULT: Dict[str, GSC] = {
     "download_timeout": GsIntConfig("下载超时", "音频下载超时时间（秒）", 60, 300),
     "voice_max_mb": GsIntConfig(
         "语音体积上限",
-        "音频超过该体积时会先用 ffmpeg 压成单声道低码率再当语音发送（QQ 对语音体积限制很严，"
-        "整首 320kbps 会被静默丢弃）",
-        2,
+        "语音文件超过该体积时才会压缩（QQ 对语音体积限制很严，整首 320kbps 会被静默丢弃）。"
+        "调大能保留更高码率，但过大的语音在部分渠道会发不出去",
+        3,
         20,
     ),
-    "voice_bitrate": GsIntConfig("语音压缩码率", "压缩时使用的 mp3 码率（kbps），越低体积越小", 64, 320),
+    "voice_bitrate": GsIntConfig(
+        "语音压缩码率上限",
+        "压缩时允许的最高 mp3 码率（kbps）。实际码率按「体积上限 ÷ 时长」在该值以内取最大，"
+        "所以调大只会让短歌更保真，不会撑破体积上限",
+        192,
+        320,
+    ),
     "keep_temp_sec": GsIntConfig("临时文件保留", "音频与卡片临时文件保留秒数", 60, 600),
     "custom_api_url": GsStrConfig(
         "自建/第三方音源API",
