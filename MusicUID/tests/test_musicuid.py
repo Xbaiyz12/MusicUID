@@ -1202,3 +1202,43 @@ def test_handle_login_direct_trigger(monkeypatch: pytest.MonkeyPatch) -> None:
     asyncio.run(handle_login(bot, ev_qq))
     assert len(sent_messages) >= 1
     assert "正在生成【QQ音乐】登录二维码" in str(sent_messages[0])
+
+
+def test_netease_task_report_format() -> None:
+    from MusicUID.MusicUID.musicuid_tasks import (
+        ClaimedTask,
+        NeteaseTaskResult,
+        format_task_report,
+    )
+
+    result = NeteaseTaskResult(
+        ok=True,
+        sign_point=2,
+        sign_message="签到成功，云贝 +2",
+        claimed=(ClaimedTask(name="听音乐30分钟", point=300),),
+        claimed_known=True,
+    )
+    text = format_task_report(result)
+    assert "签到成功，云贝 +2" in text
+    assert "共 +300" in text
+    assert "听音乐30分钟 +300" in text
+
+    empty = NeteaseTaskResult(ok=True, sign_point=0, sign_message="重复签到", claimed=(), claimed_known=True)
+    assert "暂无可领取的云贝" in format_task_report(empty)
+
+    unknown = NeteaseTaskResult(
+        ok=False, sign_point=0, sign_message="未配置网易云 Cookie", claimed=(), claimed_known=False
+    )
+    assert "未能读取待领取列表" in format_task_report(unknown)
+
+
+def test_netease_task_requires_cookie(monkeypatch: pytest.MonkeyPatch) -> None:
+    from MusicUID.MusicUID import musicuid_tasks
+    from MusicUID.MusicUID.musicuid_config import music_config
+
+    # 没配 Cookie 时必须短路返回，绝不能发网络请求
+    monkeypatch.setattr(music_config, "get_config", lambda name: SimpleNamespace(data=""))
+    result = asyncio.run(musicuid_tasks.run_netease_daily_task())
+    assert result.ok is False
+    assert result.claimed == ()
+    assert "未配置" in result.sign_message

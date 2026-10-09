@@ -13,6 +13,7 @@ from gsuid_core.server import on_core_start, on_core_shutdown
 from ..utils.http import close_client
 from ..utils.login import auto_refresh_qq_job
 from ..utils.render import render_ready, close_browser, reclaim_stale_browser
+from ..musicuid_tasks import auto_daily_task_job
 from ..musicuid_config import music_config
 from ..utils.resource.RESOURCE_PATH import TEMP_PATH
 
@@ -121,6 +122,16 @@ async def prepare_render_env() -> None:
         replace_existing=True,
     )
     logger.info("[MusicUID] 已登记 QQ 音乐移动端凭证定时巡检与自动续签任务（每12小时）")
+
+    scheduler.add_job(
+        auto_daily_task_job,
+        "cron",
+        hour=0,
+        minute=30,
+        id="musicuid_netease_daily_task",
+        replace_existing=True,
+    )
+    logger.info("[MusicUID] 已登记网易云每日任务（每天 00:30，控制台开关默认关闭）")
 
     if pytakumi_available():
         logger.info("[MusicUID] 卡片渲染就绪（pytakumi，无需浏览器）")

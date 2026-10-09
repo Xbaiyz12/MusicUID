@@ -28,13 +28,14 @@
 | `QQ音乐刷新` | 手动续期 QQ 音乐凭据 |
 | `点歌状态` | 各平台凭据与音源状态（图片卡片） |
 
-自建音源与权限：
+自建音源、任务与权限：
 
 | 指令 | 说明 |
 | --- | --- |
 | `设置自建api <URL>` | 接入自建 / 第三方音源服务，发「清空」移除 |
 | `自建api模式 fallback\|first` | `fallback` 官方优先、自建兜底；`first` 自建优先 |
 | `测试自建api` | 测试自建服务连通性 |
+| `音乐签到` | 网易云每日签到 + 领取云贝（只做签到与领取，不刷听歌） |
 | `点歌加白` / `点歌删白` / `点歌白名单` | 管理登录权限白名单（主人专用） |
 
 ## 配置
@@ -47,10 +48,11 @@
 | `max_list` | `5` | 每平台条数（最大 10） |
 | `send_voice` / `send_file` | `true` / `false` | 发语音 / 额外再发一份文件 |
 | `netease_level` | `exhigh` | 网易云音质；群里发不出去就调成 `standard` |
-| `voice_max_mb` | `2` | 语音体积上限，超过先用 ffmpeg 压缩 |
+| `voice_max_mb` | `3` | 语音体积上限，超过才压缩；调大能保住更高码率 |
 | `render_card` | `true` | 图片卡片；关掉则全部走纯文本 |
 | `custom_api_url` | 空 | 自建音源地址，留空即关闭 |
 | `custom_api_priority` | `fallback_only` | `custom_first` 则优先走自建 |
+| `netease_task_enable` | `false` | 每天 00:30 自动跑网易云签到与云贝领取 |
 | `login_whitelist` | 空 | 允许登录与改凭据的用户 ID |
 
 Cookie、超时、临时文件保留等其余配置项，含义见配置页内的说明。

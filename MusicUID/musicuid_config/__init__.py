@@ -97,6 +97,12 @@ CONFIG_DEFAULT: Dict[str, GSC] = {
         320,
     ),
     "keep_temp_sec": GsIntConfig("临时文件保留", "音频与卡片临时文件保留秒数", 60, 600),
+    "netease_task_enable": GsBoolConfig(
+        "网易云每日任务",
+        "开启后每天 00:30 自动执行网易云签到并领取已完成任务的云贝"
+        "（只做签到与领取，不刷听歌时长等动作）；也可随时发送「音乐签到」手动执行",
+        False,
+    ),
     "custom_api_url": GsStrConfig(
         "自建/第三方音源API",
         "填入自建 QQMusicApi / 音源微服务地址（如 http://127.0.0.1:3300 或支持占位符的接口 URL）；"
