@@ -48,7 +48,7 @@
 | `max_list` | `5` | 每平台条数（最大 10） |
 | `send_voice` / `send_file` | `true` / `false` | 发语音 / 额外再发一份文件 |
 | `netease_level` | `exhigh` | 网易云音质；群里发不出去就调成 `standard` |
-| `voice_max_mb` | `3` | 语音体积上限；官机软限 20MB、推荐 10，普通 QQ 渠道更严 |
+| `voice_max_mb` | `10` | 语音体积上限；官机软限 20MB（最大可填 20），普通 QQ 渠道更严 |
 | `render_card` | `true` | 图片卡片；关掉则全部走纯文本 |
 | `custom_api_url` | 空 | 自建音源地址，留空即关闭 |
 | `custom_api_priority` | `fallback_only` | `custom_first` 则优先走自建 |

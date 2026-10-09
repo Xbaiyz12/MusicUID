@@ -86,7 +86,7 @@ CONFIG_DEFAULT: Dict[str, GSC] = {
         "语音体积上限",
         "语音文件超过该体积时才会压缩，调大能保留更高码率。QQ 官方机器人软限 20MB、推荐填 10"
         "（超过软限会被降级成「文件」发送）；普通 QQ / OneBot 等渠道限制更严，过大可能被静默丢弃",
-        3,
+        10,
         20,
     ),
     "voice_bitrate": GsIntConfig(
