@@ -123,15 +123,16 @@ async def prepare_render_env() -> None:
     )
     logger.info("[MusicUID] 已登记 QQ 音乐移动端凭证定时巡检与自动续签任务（每12小时）")
 
+    # 23:30 而不是凌晨：这时当天的听歌任务已经完成，能把当天攒的云贝一起领掉
     scheduler.add_job(
         auto_daily_task_job,
         "cron",
-        hour=0,
+        hour=23,
         minute=30,
         id="musicuid_netease_daily_task",
         replace_existing=True,
     )
-    logger.info("[MusicUID] 已登记网易云每日任务（每天 00:30，控制台开关默认关闭）")
+    logger.info("[MusicUID] 已登记网易云每日任务（每天 23:30，控制台开关默认关闭）")
 
     if pytakumi_available():
         logger.info("[MusicUID] 卡片渲染就绪（pytakumi，无需浏览器）")
