@@ -94,12 +94,15 @@ async def _sign(cookie: str) -> tuple[int, str]:
     data = await _post_weapi(_SIGN_URL, {"type": 1}, cookie)
     code = get_int(data, "code", -1)
     point = get_int(data, "point", 0)
-    if code == 200 and point > 0:
+    if point > 0:
         return point, f"签到成功，云贝 +{point}"
+    raw_msg = get_str(data, "msg") or get_str(data, "message")
+    # 服务端把「今天已签过」也叫重复签到，原样透出去容易被当成失败
+    if "重复" in raw_msg or "已签" in raw_msg:
+        return 0, "今天已经签过了，明天再来"
     if code == 200:
-        return 0, "今天已经签到过了"
-    message = get_str(data, "msg") or get_str(data, "message") or f"签到失败（code={code}）"
-    return 0, message
+        return 0, raw_msg or "签到完成，但服务端没有返回云贝数"
+    return 0, raw_msg or f"签到失败（code={code}）"
 
 
 async def _claim(cookie: str) -> tuple[ClaimedTask, ...]:
