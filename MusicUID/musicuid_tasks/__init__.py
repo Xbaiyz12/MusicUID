@@ -129,7 +129,9 @@ async def _claim(cookie: str) -> tuple[ClaimedTask, ...]:
             },
             cookie,
         )
-        if get_int(result, "code", -1) != 200:
+        receipt = to_obj(result)
+        # code=200 也可能是空领：服务端用 data=false 表示这次没真的给云贝
+        if get_int(receipt, "code", -1) != 200 or receipt.get("data") is False:
             continue
         claimed.append(
             ClaimedTask(
@@ -175,6 +177,7 @@ def format_task_report(result: NeteaseTaskResult) -> str:
         lines.extend(f"   - {item.name} +{item.point}" for item in result.claimed)
     else:
         lines.append("• 云贝领取：暂无可领取的云贝")
+        lines.append("  （听歌时长类任务只认网易云客户端播放，机器人点歌不计入）")
     lines.append("")
     lines.append("💡 只做签到与领取，不刷听歌时长等动作")
     return "\n".join(lines)
