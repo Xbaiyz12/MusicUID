@@ -1242,3 +1242,11 @@ def test_netease_task_requires_cookie(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.ok is False
     assert result.claimed == ()
     assert "未配置" in result.sign_message
+
+
+def test_notify_target_parsing() -> None:
+    from MusicUID.MusicUID import musicuid_tasks
+
+    # 目标为空时必须直接返回，不触碰适配器（否则会误发到任意群）
+    assert asyncio.run(musicuid_tasks.notify_task_result("", "x")) is False
+    assert asyncio.run(musicuid_tasks.notify_task_result("   ", "x")) is False

@@ -103,6 +103,12 @@ CONFIG_DEFAULT: Dict[str, GSC] = {
         "（只做签到与领取，不刷听歌时长等动作）；也可随时发送「音乐签到」手动执行",
         False,
     ),
+    "netease_task_notify": GsStrConfig(
+        "签到结果通知目标",
+        "自动签到跑完后把结果发到哪里：填群号（如 123456）发到该群，填 p:QQ号 发私聊；"
+        "前面可加适配器名指定渠道（如 onebot:123456、onebot:p:123456）。留空则只写日志不推送",
+        "",
+    ),
     "custom_api_url": GsStrConfig(
         "自建/第三方音源API",
         "填入自建 QQMusicApi / 音源微服务地址（如 http://127.0.0.1:3300 或支持占位符的接口 URL）；"

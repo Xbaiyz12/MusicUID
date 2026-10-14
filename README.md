@@ -53,6 +53,7 @@
 | `custom_api_url` | 空 | 自建音源地址，留空即关闭 |
 | `custom_api_priority` | `fallback_only` | `custom_first` 则优先走自建 |
 | `netease_task_enable` | `false` | 每天 23:30 自动跑网易云签到与云贝领取 |
+| `netease_task_notify` | 空 | 签到结果推送目标：群号或 `p:QQ号`，留空只写日志 |
 | `login_whitelist` | 空 | 允许登录与改凭据的用户 ID |
 
 Cookie、超时、临时文件保留等其余配置项，含义见配置页内的说明。

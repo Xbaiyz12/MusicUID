@@ -180,6 +180,58 @@ def format_task_report(result: NeteaseTaskResult) -> str:
     return "\n".join(lines)
 
 
+async def notify_task_result(target: str, text: str) -> bool:
+    """把任务结果推送到配置的会话。
+
+    定时任务是静默的：不推送的话用户根本看不到它在跑，所以结果要发出来。
+
+    Args:
+        target: 通知目标，``群号`` 或 ``适配器:群号``。
+        text: 要发送的内容。
+
+    Returns:
+        是否成功发出。
+    """
+    cleaned = target.strip()
+    if not cleaned:
+        return False
+
+    adapter, _, target = cleaned.partition(":")
+    if not target:
+        adapter, target = "", adapter
+    # p: 前缀表示私聊，其余按群号处理
+    is_private = target.startswith("p:")
+    chat_id = target[2:] if is_private else target
+
+    from gsuid_core.gss import gss
+
+    if not gss.active_bot:
+        logger.warning("[MusicUID] 签到结果未推送：当前没有已连接的适配器")
+        return False
+    if adapter:
+        if adapter not in gss.active_bot:
+            logger.warning(f"[MusicUID] 签到结果未推送：适配器 {adapter} 未连接")
+            return False
+        bot_id = adapter
+    else:
+        bot_id = next(iter(gss.active_bot))
+
+    event = Event(
+        bot_id=bot_id,
+        user_id=chat_id if is_private else "",
+        group_id="" if is_private else chat_id,
+        user_type="direct" if is_private else "group",
+        real_bot_id=bot_id,
+        WS_BOT_ID=bot_id,
+    )
+    try:
+        await Bot(gss.active_bot[bot_id], event).send(text)
+    except Exception as e:  # noqa: BLE001 - 推送失败不能影响任务本身
+        logger.warning(f"[MusicUID] 签到结果推送失败：{e}")
+        return False
+    return True
+
+
 async def auto_daily_task_job() -> None:
     """定时执行网易云每日任务（开关关闭时直接返回）。"""
     if not music_config.get_config("netease_task_enable").data:
@@ -187,8 +239,12 @@ async def auto_daily_task_job() -> None:
     result = await run_netease_daily_task()
     if not result.ok:
         logger.warning(f"[MusicUID] 网易云每日任务失败：{result.sign_message}")
-        return
-    logger.info(f"[MusicUID] 网易云每日任务完成：{result.sign_message}，领取 {len(result.claimed)} 项")
+    else:
+        logger.info(f"[MusicUID] 网易云每日任务完成：{result.sign_message}，领取 {len(result.claimed)} 项")
+
+    target = music_config.get_config("netease_task_notify").data
+    if target:
+        await notify_task_result(target, format_task_report(result))
 
 
 @sv_task.on_fullmatch(
