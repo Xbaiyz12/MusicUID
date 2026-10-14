@@ -259,4 +259,9 @@ async def handle_daily_task(bot: Bot, ev: Event) -> None:
         return
     await bot.send("正在执行网易云签到与云贝领取...")
     result = await run_netease_daily_task()
-    await bot.send(format_task_report(result))
+    report = format_task_report(result)
+    await bot.send(report)
+    # 手动执行也同步到通知目标，方便在别的会话里确认结果（同群不重复发）
+    target = music_config.get_config("netease_task_notify").data
+    if target and target != ev.group_id:
+        await notify_task_result(target, report)
