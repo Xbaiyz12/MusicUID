@@ -1391,3 +1391,18 @@ def test_failure_suspends_account(tmp_path: pytest.TempPathFactory, monkeypatch:
     accounts.record_failure("netease", cookie)
     accounts.reset_failure("netease", cookie)
     assert accounts.load_accounts("netease")[0].fail_count == 0
+
+
+def test_vip_check_reports_no_conclusion(monkeypatch: pytest.MonkeyPatch) -> None:
+    """VIP 校验失败必须能与「确认无 VIP」区分，否则网络抖动会误挂账号。"""
+    from MusicUID.MusicUID.utils import vip
+    from MusicUID.MusicUID.utils.http import MusicRequestError
+
+    async def boom(*args: object, **kwargs: object) -> object:
+        raise MusicRequestError("模拟网络异常")
+
+    monkeypatch.setattr(vip, "post_json", boom)
+    assert asyncio.run(vip.check_netease_vip("MUSIC_U=x")) == (False, "", False)
+
+    # 没有凭据时同样只是「没结论」，不能被当成无 VIP
+    assert asyncio.run(vip.check_netease_vip("")) == (False, "", False)

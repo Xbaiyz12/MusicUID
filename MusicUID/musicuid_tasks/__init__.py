@@ -287,8 +287,8 @@ async def _revive_suspended_accounts() -> list[str]:
     for item in load_accounts("netease"):
         if item.active:
             continue
-        vip, _ = await check_netease_vip(item.cookie)
-        if vip and activate_account("netease", account_key("netease", item.cookie)):
+        vip, _, checked = await check_netease_vip(item.cookie)
+        if checked and vip and activate_account("netease", account_key("netease", item.cookie)):
             revived.append(item.name)
     # QQ / 酷狗没有可靠的 VIP 接口，改成每天给一次重试机会；再失败够数会重新挂起
     for platform in ("qq", "kugou"):

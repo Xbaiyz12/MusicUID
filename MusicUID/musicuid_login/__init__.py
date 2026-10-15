@@ -916,7 +916,9 @@ async def _save_platform_account(platform: str, name: str, cookie: str) -> tuple
 
     active = True
     if platform == "netease":
-        active, nick = await check_netease_vip(cookie)
+        vip, nick, checked = await check_netease_vip(cookie)
+        # 没问到结论时保守启用：网络抖动不该把一个好号挂起
+        active = vip or not checked
         if not name:
             name = nick
     if not save_account(platform, name, cookie, active=active):
