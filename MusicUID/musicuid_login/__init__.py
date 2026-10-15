@@ -46,7 +46,9 @@ QQ_COOKIE_GUIDE = (
 
 NETEASE_COOKIE_GUIDE = (
     "【网易云音乐 Cookie 获取指引】\n\n"
-    "如果你不想扫码，也可以直接提取 `MUSIC_U` Cookie 绑定：\n\n"
+    "网易云已封禁第三方扫码，推荐两种方式：\n"
+    "• 验证码登录（最省事）：发送「网易云登录 <手机号>」，再回复验证码\n"
+    "• 手动导入 Cookie：按下面的步骤取出 `MUSIC_U`\n\n"
     "📌 获取步骤：\n"
     "1. 电脑浏览器访问网易云官网：https://music.163.com 并登录账号；\n"
     "2. 按 F12 打开开发者工具，点击【应用】/【Application】或【存储】选项卡；\n"
@@ -788,6 +790,14 @@ async def handle_login(bot: Bot, ev: Event) -> None:
         return
 
     # 3. 创建扫码会话（QQ 音乐与酷狗均支持扫码）
+    if provider.platform_name == "netease":
+        # 实测能生成二维码，但官方在手机确认环节会拒绝第三方扫码
+        await bot.send(
+            "⚠️ 网易云官方会在手机确认时拒绝第三方扫码"
+            "（提示「请切换其他登录方式或升级新版本」）。\n"
+            "扫不动就改用：「网易云登录 <手机号>」验证码登录。\n\n"
+            "二维码仍在下面，能扫就直接扫。"
+        )
     await bot.send(f"正在生成【{provider.display_name}】登录二维码，请稍候...")
     try:
         session = await provider.create_qr_session()

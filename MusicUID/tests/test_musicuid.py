@@ -1195,12 +1195,13 @@ def test_handle_login_direct_trigger(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(sent_messages) >= 1
     assert "正在生成【酷狗音乐】登录二维码" in str(sent_messages[0])
 
-    # 3. 发送 "网易云登录" -> 现在走扫码流程（官方已不再拦截第三方扫码）
+    # 3. 发送 "网易云登录" -> 先提示官方会拒绝扫码，再发二维码
     sent_messages.clear()
     ev_wyy = Event(user_id="10001", user_pm=1, command="网易云登录", text="")
     asyncio.run(handle_login(bot, ev_wyy))
-    assert len(sent_messages) >= 1
-    assert "正在生成【网易云音乐】登录二维码" in str(sent_messages[0])
+    joined = "".join(str(item) for item in sent_messages)
+    assert "会在手机确认时拒绝第三方扫码" in joined
+    assert "正在生成【网易云音乐】登录二维码" in joined
 
     # 4. 发送 "QQ登录" -> 直接进入移动端扫码流程
     sent_messages.clear()
