@@ -14,6 +14,7 @@ from gsuid_core.logger import logger
 from gsuid_core.models import Event
 
 from ..utils.http import USER_AGENT, MusicRequestError, post_json
+from ..musicuid_card import send_text_card
 from ..musicuid_login import is_login_authorized
 from ..musicuid_config import music_config
 from ..utils.json_tools import to_obj, get_int, get_str, get_list
@@ -328,7 +329,7 @@ async def handle_daily_task(bot: Bot, ev: Event) -> None:
         return
     await bot.send("正在执行网易云签到与云贝领取...")
     report = format_multi_report(await run_all_netease_tasks())
-    await bot.send(report)
+    await send_text_card(bot, report, "网易云每日任务")
     # 手动执行也同步到通知目标，方便在别的会话里确认结果（同群不重复发）
     target = music_config.get_config("netease_task_notify").data
     if target and target != ev.group_id:

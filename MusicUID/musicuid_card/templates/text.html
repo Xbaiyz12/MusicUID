@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 660px;
+    font-family: "MiSans", "Microsoft YaHei", "PingFang SC", sans-serif;
+    background: linear-gradient(160deg, #f6f4ff 0%, #eef2ff 100%);
+    padding: 18px;
+  }
+  .card {
+    background: #ffffff;
+    border-radius: 22px;
+    padding: 26px 28px 22px;
+    box-shadow: 0 10px 30px rgba(96, 84, 180, 0.10);
+  }
+  .title {
+    font-size: 21px;
+    font-weight: 700;
+    color: #6d5ce0;
+    letter-spacing: 0.4px;
+  }
+  .subtitle {
+    margin-top: 5px;
+    font-size: 12.5px;
+    color: #9aa0b5;
+  }
+  .section { margin-top: 18px; }
+  .heading {
+    font-size: 14.5px;
+    font-weight: 700;
+    color: #46495c;
+    padding-left: 9px;
+    margin-bottom: 8px;
+    border-left: 3px solid #8b7cf0;
+    line-height: 1.2;
+  }
+  .line {
+    font-size: 13px;
+    color: #3d4256;
+    line-height: 1.9;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .plain { margin-top: 16px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="title">{{ title }}</div>
+    {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
+    {% for section in sections %}
+    <div class="section">
+      {% if section.heading %}<div class="heading">{{ section.heading }}</div>{% endif %}
+      {% for line in section.lines %}<div class="line">{{ line }}</div>{% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+</body>
+</html>

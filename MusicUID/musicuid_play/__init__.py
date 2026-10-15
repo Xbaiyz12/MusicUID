@@ -12,7 +12,7 @@ from gsuid_core.models import Event
 
 from .session import get_session, save_session
 from ..utils.http import MusicRequestError
-from ..musicuid_card import PlatformResult, send_song_list
+from ..musicuid_card import PlatformResult, send_song_list, send_text_card
 from ..utils.delivery import deliver_audio
 from ..utils.provider import PROVIDERS, DEFAULT_PLATFORM, SongInfo, get_provider, resolve_platform
 from ..musicuid_config import music_config
@@ -318,4 +318,4 @@ async def song_lyric(bot: Bot, ev: Event) -> None:
     body = lyrics.strip()
     if len(body) > LYRIC_LIMIT:
         body = body[:LYRIC_LIMIT] + "\n……（歌词过长已截断）"
-    await bot.send(f"🎵 {songs[0].name} - {songs[0].singers}\n\n{body}")
+    await send_text_card(bot, f"🎵 {songs[0].name} - {songs[0].singers}\n\n{body}", "歌词")

@@ -18,12 +18,16 @@ from ..musicuid_config import music_config
 CARD_TEMPLATE = "song_list.html"
 HELP_TEMPLATE = "help.html"
 STATUS_TEMPLATE = "status.html"
+TEXT_TEMPLATE = "text.html"
 
 # 多平台卡片与单平台卡片共用同一模板，只有 hero 主题不同
 MULTI_THEME = "multi"
 
 # 封面内联的体积上限：超大图会把整张卡片的 HTML 撑到几十 MB
 MAX_COVER_BYTES = 2 * 1024 * 1024
+
+# 超过这个字数就渲染成图片，免得群里刷屏
+LONG_TEXT_THRESHOLD = 50
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,7 +217,7 @@ async def send_song_list(
             return
         logger.debug("[MusicUID] 卡片渲染不可用，回退纯文本列表")
 
-    await bot.send(plain_song_list(keyword, results, play_hint))
+    await send_text_card(bot, plain_song_list(keyword, results, play_hint), "搜索结果")
 
 
 async def send_help_card(bot: Bot, help_text: str) -> None:
@@ -364,3 +368,78 @@ async def send_status_card(bot: Bot, data: dict[str, object], fallback_text: str
         logger.debug("[MusicUID] 状态卡片渲染不可用，回退纯文本")
 
     await bot.send(fallback_text)
+
+
+@dataclass(frozen=True, slots=True)
+class TextSection:
+    """长文本里的一个段落。
+
+    Attributes:
+        heading: 段落标题（``【xxx】`` 里的内容），没有则为空串。
+        lines: 段落内的原始行。
+    """
+
+    heading: str
+    lines: tuple[str, ...]
+
+
+def split_sections(text: str) -> tuple[TextSection, ...]:
+    """把纯文本按 ``【小标题】`` 拆成段落。
+
+    Args:
+        text: 原始文本，空行会被跳过。
+
+    Returns:
+        段落元组；没有小标题时整段作为一段（heading 为空）。
+    """
+    sections: list[TextSection] = []
+    heading = ""
+    lines: list[str] = []
+
+    def flush() -> None:
+        if heading or lines:
+            sections.append(TextSection(heading=heading, lines=tuple(lines)))
+
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("【") and stripped.endswith("】") and len(stripped) > 2:
+            flush()
+            heading = stripped[1:-1]
+            lines = []
+            continue
+        lines.append(raw.rstrip())
+    flush()
+    return tuple(sections)
+
+
+async def send_text_card(bot: Bot, text: str, title: str = "MusicUID", subtitle: str = "") -> None:
+    """发送文本：短的直接发，超过阈值的渲染成图片。
+
+    渲染不可用或开关关闭时自动回退成纯文本，绝不让消息发不出去。
+
+    Args:
+        bot: Bot wrapper bound to the current event.
+        text: 要发送的文本。
+        title: 卡片标题。
+        subtitle: 卡片副标题。
+    """
+    if len(text) <= LONG_TEXT_THRESHOLD or not music_config.get_config("render_card").data:
+        await bot.send(text)
+        return
+    sections = split_sections(text)
+    if not sections:
+        await bot.send(text)
+        return
+    data: dict[str, object] = {
+        "title": title,
+        "subtitle": subtitle,
+        "sections": [{"heading": section.heading, "lines": list(section.lines)} for section in sections],
+    }
+    png = await render_card(TEXT_TEMPLATE, data)
+    if png is None:
+        logger.debug("[MusicUID] 长文本卡片渲染不可用，回退纯文本")
+        await bot.send(text)
+        return
+    await bot.send(MessageSegment.image(png))

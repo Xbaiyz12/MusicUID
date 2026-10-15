@@ -20,7 +20,7 @@ from ..utils.login import (
     load_qq_credential,
     refresh_qq_credential,
 )
-from ..musicuid_card import send_status_card
+from ..musicuid_card import send_text_card, send_status_card
 from ..musicuid_config import music_config
 from ..utils.provider.custom_api import test_custom_api_connection
 
@@ -638,7 +638,7 @@ async def handle_set_cookie(bot: Bot, ev: Event) -> None:
     # 1. 如果是专门平台的快捷指令，如 qq音乐cookie / 网易云cookie / 酷狗cookie
     if cmd in ("qq音乐cookie", "qqcookie", "qq_cookie"):
         if not raw_text:
-            await bot.send(QQ_COOKIE_GUIDE)
+            await send_text_card(bot, QQ_COOKIE_GUIDE, "QQ 音乐 Cookie 指引")
             return
         formatted = format_qq_cookie(raw_text)
         missing = _cookie_missing_fields("qq", formatted)
@@ -656,7 +656,7 @@ async def handle_set_cookie(bot: Bot, ev: Event) -> None:
 
     if cmd in ("网易云cookie", "网易cookie"):
         if not raw_text:
-            await bot.send(NETEASE_COOKIE_GUIDE)
+            await send_text_card(bot, NETEASE_COOKIE_GUIDE, "网易云 Cookie 指引")
             return
         # 兼容用户直接粘贴 MUSIC_U 或包含 MUSIC_U=xxx 的长字符串
         cookie_to_save = raw_text
@@ -755,7 +755,7 @@ async def handle_login(bot: Bot, ev: Event) -> None:
 
     # 1. 单独发送「点歌登录」或「音乐登录」且未带平台参数 -> 显示登录引导菜单
     if cmd in ("点歌登录", "音乐登录") and not raw_text:
-        await bot.send(LOGIN_MENU)
+        await send_text_card(bot, LOGIN_MENU, "登录与凭据配置")
         return
 
     # 2. 判断目标平台（默认扫码平台为酷狗 kugou）
@@ -771,7 +771,7 @@ async def handle_login(bot: Bot, ev: Event) -> None:
 
     provider = get_login_provider(target_platform)
     if not provider:
-        await bot.send(LOGIN_MENU)
+        await send_text_card(bot, LOGIN_MENU, "登录与凭据配置")
         return
 
     # 网易云带手机号时走短信验证码，其余情况统一扫码
@@ -954,4 +954,4 @@ async def handle_account_list(bot: Bot, ev: Event) -> None:
         )
         sections.append("\n".join(lines))
     sections.append("➕ 加号：「网易云登录」/「酷狗登录」扫码，或「网易云登录 <手机号>」验证码")
-    await bot.send("\n\n".join(sections))
+    await send_text_card(bot, "\n\n".join(sections), "音乐账号池")
