@@ -1,7 +1,8 @@
 """帮助指令与全局帮助一览注册。
 
 帮助内容只在 ``HELP_SECTIONS`` 里维护一份：帮助图与纯文本兜底都由它生成，
-避免图和文本各写一套、改了一处另一处不同步。
+避免图和文本各写一套。角标配色按分组给，``help.html`` 支持三种：
+默认（紫）、``vip``（金）、``perm``（红）。
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ HELP_SECTIONS: Final[tuple[HelpSection, ...]] = (
             HelpItem("听N", "播放列表第 N 首，10 分钟内有效"),
             HelpItem("歌词 关键词", "查看歌词（仅网易云）"),
         ),
+        tag="搜索播放",
     ),
     HelpSection(
         "账号登录",
@@ -49,6 +51,8 @@ HELP_SECTIONS: Final[tuple[HelpSection, ...]] = (
             HelpItem("点歌账号", "查看网易云 / QQ音乐 / 酷狗账号池，多号轮换取流"),
             HelpItem("点歌状态", "查看凭据与音源配置状态"),
         ),
+        tag="登录",
+        tag_type="vip",
     ),
     HelpSection(
         "Cookie 快捷配置",
@@ -58,6 +62,7 @@ HELP_SECTIONS: Final[tuple[HelpSection, ...]] = (
             HelpItem("酷狗cookie <Cookie值>", "手动导入酷狗凭据"),
             HelpItem("设置cookie 平台 <值>", "通用写法，平台可写 网易云 / qq / 酷狗"),
         ),
+        tag="凭据",
     ),
     HelpSection(
         "自建音源（可选）",
@@ -66,6 +71,7 @@ HELP_SECTIONS: Final[tuple[HelpSection, ...]] = (
             HelpItem("自建api模式 <模式>", "fallback 官方优先兜底 / first 自建优先"),
             HelpItem("测试自建api", "测试自建服务连通性"),
         ),
+        tag="可选",
     ),
     HelpSection(
         "网易云每日任务",
@@ -73,6 +79,8 @@ HELP_SECTIONS: Final[tuple[HelpSection, ...]] = (
             HelpItem("音乐签到", "每日签到 + 领取已完成任务的云贝"),
             HelpItem("控制台开关", "开「网易云每日任务」后每天 23:30 自动执行"),
         ),
+        tag="任务",
+        tag_type="vip",
     ),
     HelpSection(
         "权限管理（主人专用）",
@@ -81,10 +89,13 @@ HELP_SECTIONS: Final[tuple[HelpSection, ...]] = (
             HelpItem("点歌删白 <ID/@用户>", "移除登录白名单"),
             HelpItem("点歌白名单", "查看当前白名单"),
         ),
+        tag="主人权限",
+        tag_type="perm",
     ),
     HelpSection(
         "其他",
         (HelpItem("发送音乐分享链接", "自动解析网易云 / QQ / 酷狗单曲或歌单"),),
+        tag="解析",
     ),
 )
 

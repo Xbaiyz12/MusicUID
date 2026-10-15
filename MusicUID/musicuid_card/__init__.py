@@ -37,12 +37,14 @@ class HelpItem:
     Attributes:
         cmd: 指令写法。
         desc: 一句话说明。
-        tag: 右侧角标，留空则不显示。
+        tag: 右侧角标，留空则用所在分组的角标。
+        tag_type: 角标配色（``""`` / ``perm`` / ``vip``），留空则用分组的。
     """
 
     cmd: str
     desc: str
     tag: str = ""
+    tag_type: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,10 +54,14 @@ class HelpSection:
     Attributes:
         title: 分组标题。
         items: 组内指令。
+        tag: 组内条目的默认角标文案。
+        tag_type: 组内条目的默认角标配色。
     """
 
     title: str
     items: tuple[HelpItem, ...]
+    tag: str = ""
+    tag_type: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,7 +269,13 @@ async def send_help_card(bot: Bot, sections: tuple[HelpSection, ...], fallback_t
                     "type": "cmd",
                     "title": section.title,
                     "commands": [
-                        {"cmd": item.cmd, "desc": item.desc, "tag": item.tag, "tag_type": ""} for item in section.items
+                        {
+                            "cmd": item.cmd,
+                            "desc": item.desc,
+                            "tag": item.tag or section.tag,
+                            "tag_type": item.tag_type or section.tag_type,
+                        }
+                        for item in section.items
                     ],
                 }
                 for section in sections
