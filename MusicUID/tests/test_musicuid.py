@@ -1014,6 +1014,7 @@ def test_help_card_template_render() -> None:
 
 def test_send_help_card_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     from MusicUID.MusicUID.musicuid_card import send_help_card
+    from MusicUID.MusicUID.musicuid_help import HELP_SECTIONS
     from MusicUID.MusicUID.musicuid_config import music_config
 
     sent_messages: list[object] = []
@@ -1022,11 +1023,26 @@ def test_send_help_card_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
         async def send(self, msg: object) -> None:
             sent_messages.append(msg)
 
-    # 1. 当 render_card 为 False 时，直接发送纯文本
+    # 1. 当 render_card 为 False 时，直接发送纯文本兜底
     monkeypatch.setattr(music_config, "get_config", lambda name: SimpleNamespace(data=False))
     bot = MockBot()
-    asyncio.run(send_help_card(bot, "纯文本帮助信息"))
+    asyncio.run(send_help_card(bot, HELP_SECTIONS, "纯文本帮助信息"))
     assert sent_messages == ["纯文本帮助信息"]
+
+
+def test_help_sections_are_single_source() -> None:
+    """帮助图与纯文本兜底必须来自同一份数据，否则会出现改了图没改文本的情况。"""
+    from MusicUID.MusicUID.musicuid_help import HELP_TEXT, HELP_SECTIONS
+
+    for section in HELP_SECTIONS:
+        assert section.title in HELP_TEXT
+        for item in section.items:
+            assert item.cmd in HELP_TEXT
+            assert item.desc in HELP_TEXT
+
+    # 这几轮新加的功能必须出现在帮助里
+    for keyword in ("网易云登录 <手机号>", "点歌账号", "音乐签到", "酷狗登录", "设置自建api"):
+        assert keyword in HELP_TEXT
 
 
 def test_status_card_template_render() -> None:

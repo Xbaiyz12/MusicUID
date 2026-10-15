@@ -31,6 +31,34 @@ LONG_TEXT_THRESHOLD = 50
 
 
 @dataclass(frozen=True, slots=True)
+class HelpItem:
+    """帮助里的一条指令。
+
+    Attributes:
+        cmd: 指令写法。
+        desc: 一句话说明。
+        tag: 右侧角标，留空则不显示。
+    """
+
+    cmd: str
+    desc: str
+    tag: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class HelpSection:
+    """帮助里的一个分组。
+
+    Attributes:
+        title: 分组标题。
+        items: 组内指令。
+    """
+
+    title: str
+    items: tuple[HelpItem, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class PlatformResult:
     """One platform's outcome for a keyword.
 
@@ -220,136 +248,34 @@ async def send_song_list(
     await send_text_card(bot, plain_song_list(keyword, results, play_hint), "搜索结果")
 
 
-async def send_help_card(bot: Bot, help_text: str) -> None:
+async def send_help_card(bot: Bot, sections: tuple[HelpSection, ...], fallback_text: str) -> None:
     """Send help instructions as a rendered image card, falling back to plain text.
 
     Args:
         bot: Bot wrapper bound to the current event.
-        help_text: Plain text fallback string.
+        sections: 结构化帮助分组，内容由 ``musicuid_help`` 单一维护。
+        fallback_text: 渲染不可用时发送的纯文本。
     """
     if music_config.get_config("render_card").data:
-        sections: list[dict[str, object]] = [
-            {
-                "type": "search",
-                "title": "点歌搜索与播放",
-                "commands": [
-                    {
-                        "cmd": "点歌 关键词",
-                        "desc": "搜索并在列表中展示多平台匹配歌曲",
-                        "tag": "搜索",
-                        "tag_type": "",
-                    },
-                    {
-                        "cmd": "点歌 QQ 关键词",
-                        "desc": "临时切换至指定平台（网易/QQ/酷狗）搜索",
-                        "tag": "平台",
-                        "tag_type": "",
-                    },
-                    {
-                        "cmd": "播放 关键词",
-                        "desc": "搜索并直接发送第一首匹配歌曲的音频",
-                        "tag": "播放",
-                        "tag_type": "",
-                    },
-                    {
-                        "cmd": "听N",
-                        "desc": "播放当前搜索列表第 N 首（支持听1、听2等）",
-                        "tag": "选播",
-                        "tag_type": "",
-                    },
-                    {
-                        "cmd": "歌词 关键词",
-                        "desc": "获取并展示指定歌曲的歌词内容",
-                        "tag": "歌词",
-                        "tag_type": "",
-                    },
-                ],
-            },
-            {
-                "type": "login",
-                "title": "扫码登录与凭证管理",
-                "commands": [
-                    {
-                        "cmd": "酷狗登录 / 点歌登录 酷狗",
-                        "desc": "手机酷狗扫码一键登录，解锁 VIP 歌曲与完整音质",
-                        "tag": "扫码登录",
-                        "tag_type": "vip",
-                    },
-                    {
-                        "cmd": "网易云cookie <MUSIC_U值>",
-                        "desc": "快捷导入网易云音乐 Cookie（发送「网易云cookie」看教程）",
-                        "tag": "快捷导入",
-                        "tag_type": "",
-                    },
-                    {
-                        "cmd": "QQ音乐cookie <Cookie值>",
-                        "desc": "设置 QQ 音乐 Cookie（发送「QQ音乐cookie」可看教程）",
-                        "tag": "快捷配置",
-                        "tag_type": "",
-                    },
-                    {
-                        "cmd": "设置cookie 平台 <Cookie值>",
-                        "desc": "手动绑定指定平台 Cookie 凭据（如 qq/网易云/酷狗）",
-                        "tag": "通用配置",
-                        "tag_type": "",
-                    },
-                    {
-                        "cmd": "点歌状态 / 点歌登录状态",
-                        "desc": "查询网易云、QQ 音乐、酷狗三平台的凭据绑定状态",
-                        "tag": "状态查询",
-                        "tag_type": "",
-                    },
-                    {
-                        "cmd": "点歌加白 <用户ID/@用户>",
-                        "desc": "授权指定用户使用平台登录与凭据配置权限（主人可用）",
-                        "tag": "主人权限",
-                        "tag_type": "perm",
-                    },
-                    {
-                        "cmd": "点歌删白 <用户ID/@用户>",
-                        "desc": "从登录白名单中移除用户（主人可用）",
-                        "tag": "主人权限",
-                        "tag_type": "perm",
-                    },
-                    {
-                        "cmd": "点歌白名单",
-                        "desc": "查看当前已获得登录授权的白名单用户列表",
-                        "tag": "白名单",
-                        "tag_type": "",
-                    },
-                ],
-            },
-            {
-                "type": "link",
-                "title": "链接解析与配置",
-                "commands": [
-                    {
-                        "cmd": "发送音乐分享链接",
-                        "desc": "自动解析网易云/QQ/酷狗单曲或歌单并播放",
-                        "tag": "自动解析",
-                        "tag_type": "",
-                    },
-                    {
-                        "cmd": "网页控制台配置",
-                        "desc": "设置默认平台、列表条数、语音发送与卡片开关",
-                        "tag": "后台配置",
-                        "tag_type": "",
-                    },
-                ],
-            },
-        ]
-
         data: dict[str, object] = {
-            "sections": sections,
+            "sections": [
+                {
+                    "type": "cmd",
+                    "title": section.title,
+                    "commands": [
+                        {"cmd": item.cmd, "desc": item.desc, "tag": item.tag, "tag_type": ""} for item in section.items
+                    ],
+                }
+                for section in sections
+            ],
         }
-
         png = await render_card(HELP_TEMPLATE, data)
         if png is not None:
             await bot.send(MessageSegment.image(png))
             return
         logger.debug("[MusicUID] 帮助卡片渲染不可用，回退纯文本")
 
-    await bot.send(help_text)
+    await bot.send(fallback_text)
 
 
 async def send_status_card(bot: Bot, data: dict[str, object], fallback_text: str) -> None:
