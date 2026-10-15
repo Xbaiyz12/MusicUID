@@ -1435,3 +1435,38 @@ def test_kugou_gateway_parses_scanned_cookie_format() -> None:
     # 旧写法（token= / userid=）解析不出来，所以那个形态是被修掉的 bug
     broken = "token=TOKEN123; userid=2039242825"
     assert re.search(r"(?:^|;\s*)t=([^;]*)", broken) is None
+
+
+def test_qq_missing_fields_rejects_p_uin() -> None:
+    """字段校验必须按 ; 分段，否则 `p_uin=` 会被当成 `uin=` 蒙混过关。"""
+    from MusicUID.MusicUID.musicuid_login import _cookie_missing_fields
+
+    assert _cookie_missing_fields("qq", "uin=123456; qm_keyst=abc") == ""
+    assert _cookie_missing_fields("qq", "p_uin=123456; qm_keyst=abc") != ""
+    assert _cookie_missing_fields("qq", "uin=; qm_keyst=abc") != ""
+    assert _cookie_missing_fields("qq", "uin=123456") != ""
+
+
+def test_netease_transport_error_is_not_account_failure(
+    tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """所有档位都传输失败时不能记账号失败，否则网络抖动会把好号挂起。"""
+    from MusicUID.MusicUID.utils import accounts
+    from MusicUID.MusicUID.utils.http import MusicRequestError
+    from MusicUID.MusicUID.utils.provider import netease as nt
+    from MusicUID.MusicUID.utils.provider.base import SongInfo
+
+    monkeypatch.setattr(accounts, "ACCOUNTS_PATH", tmp_path / "accounts.json")
+    monkeypatch.setattr(accounts, "LEGACY_NETEASE_PATH", tmp_path / "legacy.json")
+    assert accounts.save_account("netease", "好号", "good_u") is True
+
+    async def boom(*args: object, **kwargs: object) -> object:
+        raise MusicRequestError("模拟超时")
+
+    monkeypatch.setattr(nt, "post_json", boom)
+    song = SongInfo(platform="netease", song_id="1", name="n", singers="s")
+    assert asyncio.run(nt.NeteaseProvider()._weapi_play_url(song)) == ""
+    # 传输错误不计失败：计数保持 0，不会被挂起
+    item = accounts.load_accounts("netease")[0]
+    assert item.fail_count == 0
+    assert item.active is True

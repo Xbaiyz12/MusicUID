@@ -288,6 +288,7 @@ class NeteaseProvider:
         for cookie in iter_cookies("netease"):
             headers["Cookie"] = cookie
             hit = ""
+            responded = False
             for level in levels:
                 payload: dict[str, object] = {
                     "ids": f"[{song.song_id}]",
@@ -301,6 +302,7 @@ class NeteaseProvider:
                     # 传输错误跟账号无关：不记失败，继续试下一档
                     logger.debug(f"[MusicUID] weapi 取流请求失败（{level}）：{e}")
                     continue
+                responded = True
                 for raw in get_list(to_obj(data), "data"):
                     url = get_str(to_obj(raw), "url")
                     if url:
@@ -312,6 +314,8 @@ class NeteaseProvider:
                 reset_failure("netease", cookie)
                 logger.debug(f"[MusicUID] weapi 命中 {level}：{song.name}")
                 return hit
-            # 各档请求都成功却没下发直链，才算这个号的问题
-            record_failure("netease", cookie)
+            # 只有真的问过服务端却没下发直链，才算这个号的问题；
+            # 全部档位都是传输错误时不能记账，否则网络抖动会把好号挂起
+            if responded:
+                record_failure("netease", cookie)
         return ""

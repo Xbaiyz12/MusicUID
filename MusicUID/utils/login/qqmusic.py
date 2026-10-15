@@ -279,6 +279,10 @@ async def _refresh_qq_credential_locked(cred: QQMobileCredential | None = None) 
 
     formatted_cookie = f"uin={target['musicid']}; qm_keyst={new_musickey}; qqmusic_key={new_musickey}"
     music_config.set_config("qqmusic_cookie", formatted_cookie)
+    # 同步回填账号池：否则池里那份旧 Cookie 会一路用到失效，然后被当坏号挂起
+    from ..accounts import save_account
+
+    save_account("qq", new_nick or str(target["musicid"]), formatted_cookie)
     logger.info(
         f"[MusicUID] QQ 音乐移动凭据自动刷新成功（用户: {new_nick or target['musicid']}，"
         f"有效期延顺至 {new_expires_in} 秒）"

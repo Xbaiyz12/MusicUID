@@ -1,0 +1,11 @@
+{
+  "qq": [
+    {
+      "name": "账号1",
+      "cookie": "uin=123; qm_keyst=abc",
+      "added_at": "2026-10-15 23:31",
+      "active": true,
+      "fail_count": 0
+    }
+  ]
+}

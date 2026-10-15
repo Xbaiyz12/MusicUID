@@ -166,9 +166,16 @@ def _cookie_config_key(platform_name: str) -> str:
 
 
 def _cookie_missing_fields(platform_name: str, cookie: str) -> str:
-    """返回凭据里缺失的关键字段名（顿号分隔），空串表示通过校验。"""
+    """返回凭据里缺失的关键字段名（顿号分隔），空串表示通过校验。
+
+    按 ``;`` 分段取值判断，不能用子串匹配——否则 ``uin=`` 会被 ``p_uin=`` 蒙混过关，
+    而后者算不出账号标识，入池会静默失败。
+    """
+    from ..utils.accounts import cookie_value_of
+
     if platform_name == "qq":
-        return "、".join(name for name in ("uin=", "qm_keyst=") if name not in cookie)
+        missing = [name for name in ("uin", "qm_keyst") if not cookie_value_of(cookie, name).strip()]
+        return "、".join(missing)
     if platform_name == "netease":
         return "" if "MUSIC_U" in cookie else "MUSIC_U"
     return ""
@@ -661,8 +668,14 @@ async def handle_set_cookie(bot: Bot, ev: Event) -> None:
             return
         music_config.set_config("qqmusic_cookie", formatted)
         # 手动导入的号也入账号池，才能参与轮换取流
-        await _save_platform_account("qq", "", formatted)
+        saved, _ = await _save_platform_account("qq", "", formatted)
         logger.info("[MusicUID] 已成功更新 QQ 音乐 Cookie")
+        if not saved:
+            await bot.send(
+                "⚠️ Cookie 已写入配置，但**没能加入账号池**：取不到有效的 `uin`。\n"
+                "请确认写的是 `uin=数字`，而不是 `p_uin=` 或空值（值里带空格也会被拒）。"
+            )
+            return
         await bot.send(f"✅ 已成功更新【QQ 音乐】Cookie 凭据！\n已格式化提取核心票据：\n{_mask_cookie(formatted)}")
         return
 
@@ -738,8 +751,11 @@ async def handle_set_cookie(bot: Bot, ev: Event) -> None:
         logger.error(f"[MusicUID] 保存 {provider.display_name} 凭据失败：配置键 {config_key} 不存在")
         await bot.send("❌ 保存凭据失败，请检查插件配置是否完整")
         return
+    # 与专用分支保持一致：通用写法也要入账号池，否则只有配置项那一个号
+    saved, _ = await _save_platform_account(provider.platform_name, "", cookie_val)
     logger.info(f"[MusicUID] 已成功更新 {provider.display_name} Cookie")
-    await bot.send(f"✅ 已成功更新【{provider.display_name}】Cookie 凭据！")
+    tail = "" if saved else "\n⚠️ 但没能加入账号池（凭据缺少账号标识字段）。"
+    await bot.send(f"✅ 已成功更新【{provider.display_name}】Cookie 凭据！{tail}")
 
 
 # ---------------------------------------------------------------- 扫码登录
@@ -869,8 +885,8 @@ async def _poll_login_status(
                 await bot.send(f"⚠️【{provider.display_name}】登录成功，但凭据写入失败，请检查插件配置后重试")
                 return
             logger.info(f"[MusicUID] {provider.display_name} 扫码登录成功，凭证已保存")
-            # 网易云与酷狗的扫码结果都入账号池，多号轮换取流才有意义
-            if provider.platform_name in ("netease", "kugou"):
+            # 三家扫码结果都入账号池，多号轮换取流才有意义
+            if provider.platform_name in ("netease", "kugou", "qq"):
                 await _save_platform_account(provider.platform_name, session.nickname or "", session.cookie)
             success_tip = (
                 f"🎉【{provider.display_name}】扫码登录成功！\n"
@@ -993,7 +1009,7 @@ async def handle_account_remove(bot: Bot, ev: Event) -> None:
         await bot.send("❌ 权限不足：仅主人及登录白名单用户可管理账号池。")
         return
 
-    from ..utils.accounts import remove_account
+    from ..utils.accounts import load_accounts, remove_account
     from ..utils.provider import resolve_platform
 
     parts = ev.text.strip().split()
@@ -1004,11 +1020,16 @@ async def handle_account_remove(bot: Bot, ev: Event) -> None:
     if not platform:
         await bot.send("❌ 认不出平台，请写 网易云 / qq / 酷狗")
         return
-    if not parts[1].isdigit():
+    if not (parts[1].isascii() and parts[1].isdigit()):
         await bot.send("❌ 序号必须是数字，例如 `点歌删号 网易云 2`")
         return
     removed = remove_account(platform, int(parts[1]))
     if not removed:
         await bot.send(f"❌ 没有第 {parts[1]} 个账号，发送「点歌账号」看看当前列表。")
+        return
+    # 池里已经没号了就把配置项也清掉，否则它仍会被当作回退凭据继续取流
+    if not load_accounts(platform):
+        music_config.set_config(_cookie_config_key(platform), "")
+        await bot.send(f"✅ 已从账号池删除【{platform}】的账号：{removed}\n（池已空，配置项里的那一份也一并清空了）")
         return
     await bot.send(f"✅ 已从账号池删除【{platform}】的账号：{removed}")

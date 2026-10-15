@@ -37,7 +37,7 @@ class HelpItem:
     Attributes:
         cmd: 指令写法。
         desc: 一句话说明。
-        tag: 右侧角标，留空则用所在分组的角标。
+        tag: 右侧角标文案，留空则不显示角标。
         tag_type: 角标配色（``""`` / ``perm`` / ``vip``），留空则用分组的。
     """
 
