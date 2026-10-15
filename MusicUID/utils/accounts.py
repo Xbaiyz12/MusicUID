@@ -54,6 +54,7 @@ class MusicAccount:
     name: str
     cookie: str
     added_at: str
+    active: bool = True
 
 
 def cookie_value_of(cookie: str, key: str) -> str:
@@ -170,6 +171,7 @@ def _parse_accounts(items: object) -> list[MusicAccount]:
                 name=get_str(entry, "name") or f"账号{len(accounts) + 1}",
                 cookie=cookie,
                 added_at=get_str(entry, "added_at"),
+                active=entry.get("active") is not False,
             )
         )
     return accounts
@@ -185,7 +187,15 @@ def _write_all(data: dict[str, list[MusicAccount]]) -> bool:
         是否写入成功。
     """
     payload = {
-        platform: [{"name": item.name, "cookie": item.cookie, "added_at": item.added_at} for item in accounts]
+        platform: [
+            {
+                "name": item.name,
+                "cookie": item.cookie,
+                "added_at": item.added_at,
+                "active": item.active,
+            }
+            for item in accounts
+        ]
         for platform, accounts in data.items()
         if accounts
     }
@@ -247,13 +257,14 @@ def load_accounts(platform: str) -> list[MusicAccount]:
     return _read_all().get(platform, [])
 
 
-def save_account(platform: str, name: str, cookie: str) -> bool:
-    """保存一个账号；同平台的同一个账号只保留一条（更新备注名）。
+def save_account(platform: str, name: str, cookie: str, active: bool = True) -> bool:
+    """保存一个账号；同平台的同一个账号只保留一条（更新备注名与启用状态）。
 
     Args:
         platform: 平台标识。
         name: 备注名，留空则自动编号。
         cookie: 该平台的 Cookie 串或裸凭据值。
+        active: 是否启用；``False`` 表示挂起，不参与取流轮换。
 
     Returns:
         是否保存成功。
@@ -269,10 +280,37 @@ def save_account(platform: str, name: str, cookie: str) -> bool:
             name=name.strip() or f"账号{len(kept) + 1}",
             cookie=normalized,
             added_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
+            active=active,
         )
     )
     data[platform] = kept
     return _write_all(data)
+
+
+def activate_account(platform: str, key: str) -> bool:
+    """把某个挂起的账号改为启用。
+
+    Args:
+        platform: 平台标识。
+        key: 账号唯一标识。
+
+    Returns:
+        是否找到挂起账号并更新成功。
+    """
+    data = _read_all()
+    accounts = data.get(platform, [])
+    for index, item in enumerate(accounts):
+        if item.active or account_key(platform, item.cookie) != key:
+            continue
+        accounts[index] = MusicAccount(
+            name=item.name,
+            cookie=item.cookie,
+            added_at=item.added_at,
+            active=True,
+        )
+        data[platform] = accounts
+        return _write_all(data)
+    return False
 
 
 def remove_account(platform: str, index: int) -> str:
@@ -297,9 +335,9 @@ def remove_account(platform: str, index: int) -> str:
 
 
 def pick_cookie(platform: str) -> str:
-    """按轮询取某平台一个账号的 Cookie，用于取流。
+    """按轮询取某平台一个「已启用」账号的 Cookie，用于取流。
 
-    账号池为空时回退到该平台的配置项，保证单账号用户可用。
+    账号池为空或全部挂起时回退到该平台的配置项，保证单账号用户可用。
 
     Args:
         platform: 平台标识。
@@ -307,7 +345,7 @@ def pick_cookie(platform: str) -> str:
     Returns:
         可直接放进请求头的 Cookie 串，没有可用账号时为空串。
     """
-    accounts = load_accounts(platform)
+    accounts = [item for item in load_accounts(platform) if item.active]
     if not accounts:
         config_key = _CONFIG_KEYS.get(platform, "")
         if not config_key:

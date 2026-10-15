@@ -1322,3 +1322,42 @@ def test_pick_cookie_falls_back_to_config(monkeypatch: pytest.MonkeyPatch) -> No
     assert accounts.pick_cookie("netease") == "MUSIC_U=fallback_u; os=pc"
     # 酷狗不做 MUSIC_U / os=pc 之类的改写
     assert accounts.pick_cookie("kugou") == "fallback_u"
+
+
+def test_pick_cookie_skips_suspended(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """挂起账号不参与轮换：没 VIP 的号绝不能被取流选中。"""
+    from MusicUID.MusicUID.utils import accounts
+
+    monkeypatch.setattr(accounts, "ACCOUNTS_PATH", tmp_path / "accounts.json")
+    monkeypatch.setattr(accounts, "LEGACY_NETEASE_PATH", tmp_path / "legacy.json")
+    assert accounts.save_account("netease", "免费号", "free_u", active=False) is True
+    assert accounts.save_account("netease", "会员号", "vip_u", active=True) is True
+
+    # 池里同时有挂起与启用的号时，只会取到启用那个
+    assert accounts.pick_cookie("netease") == "MUSIC_U=vip_u; os=pc"
+
+    # 只剩挂起账号时回退配置项，而不是拿挂起号去取流
+    monkeypatch.setattr(
+        accounts,
+        "load_accounts",
+        lambda platform: [
+            accounts.MusicAccount(name="免费号", cookie="MUSIC_U=free_u; os=pc", added_at="", active=False)
+        ],
+    )
+    monkeypatch.setattr(accounts.music_config, "get_config", lambda name: SimpleNamespace(data="cfg_u"))
+    assert accounts.pick_cookie("netease") == "MUSIC_U=cfg_u; os=pc"
+
+
+def test_activate_account_revives(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """复查到续费后能把挂起账号重新启用。"""
+    from MusicUID.MusicUID.utils import accounts
+
+    monkeypatch.setattr(accounts, "ACCOUNTS_PATH", tmp_path / "accounts.json")
+    monkeypatch.setattr(accounts, "LEGACY_NETEASE_PATH", tmp_path / "legacy.json")
+    accounts.save_account("netease", "免费号", "free_u", active=False)
+    key = accounts.account_key("netease", "MUSIC_U=free_u; os=pc")
+
+    assert accounts.activate_account("netease", key) is True
+    assert accounts.load_accounts("netease")[0].active is True
+    # 已启用的账号不再重复处理
+    assert accounts.activate_account("netease", key) is False

@@ -59,6 +59,7 @@
 | `netease_task_enable` | `false` | 每天 23:30 自动跑网易云签到与云贝领取 |
 | `netease_task_notify` | 空 | 签到结果推送目标：群号或 `p:QQ号`，留空只写日志 |
 | `login_whitelist` | 空 | 允许登录与改凭据的用户 ID |
+| `open_login` | `false` | 放开登录权限；新号先验 VIP，没 VIP 只挂起不参与取流 |
 
 Cookie、超时、临时文件保留等其余配置项，含义见配置页内的说明。
 

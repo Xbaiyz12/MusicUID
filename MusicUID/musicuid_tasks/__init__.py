@@ -274,6 +274,25 @@ async def notify_task_result(target: str, text: str) -> bool:
     return True
 
 
+async def _revive_suspended_accounts() -> list[str]:
+    """复查挂起的网易云账号，已续费有 VIP 的就重新启用。
+
+    Returns:
+        本次被启用的账号名列表。
+    """
+    from ..utils.vip import check_netease_vip
+    from ..utils.accounts import account_key, load_accounts, activate_account
+
+    revived: list[str] = []
+    for item in load_accounts("netease"):
+        if item.active:
+            continue
+        vip, _ = await check_netease_vip(item.cookie)
+        if vip and activate_account("netease", account_key("netease", item.cookie)):
+            revived.append(item.name)
+    return revived
+
+
 def format_multi_report(results: list[tuple[str, NeteaseTaskResult]]) -> str:
     """把多账号的执行结果拼成一条回执。
 
@@ -311,6 +330,10 @@ async def auto_daily_task_job() -> None:
     if failed:
         logger.warning(f"[MusicUID] 网易云每日任务部分失败：{'、'.join(failed)}")
     logger.info(f"[MusicUID] 网易云每日任务完成：{len(results)} 个账号")
+
+    revived = await _revive_suspended_accounts()
+    if revived:
+        logger.info(f"[MusicUID] 复查到已续费账号并重新启用：{'、'.join(revived)}")
 
     target = music_config.get_config("netease_task_notify").data
     if target:

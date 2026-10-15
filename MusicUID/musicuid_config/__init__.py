@@ -109,6 +109,12 @@ CONFIG_DEFAULT: Dict[str, GSC] = {
         "前面可加适配器名指定渠道（如 onebot:123456、onebot:p:123456）。留空则只写日志不推送",
         "",
     ),
+    "open_login": GsBoolConfig(
+        "放开登录权限",
+        "开启后任何人（不限白名单）都能扫码或导入凭据。提交的账号会先验 VIP："
+        "有 VIP 才参与取流轮换，没 VIP 只挂起留着，等它续费后自动启用",
+        False,
+    ),
     "custom_api_url": GsStrConfig(
         "自建/第三方音源API",
         "填入自建 QQMusicApi / 音源微服务地址（如 http://127.0.0.1:3300 或支持占位符的接口 URL）；"
