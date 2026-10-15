@@ -8,9 +8,10 @@ from gsuid_core.logger import logger
 
 from .base import SongInfo, SongCollection
 from ..http import get_json, post_json
+from ..accounts import pick_cookie
 from .custom_api import resolve_custom_api
 from ..json_tools import to_obj, get_int, get_obj, get_str, get_list, join_names
-from ..login.qqmusic import load_qq_credential, refresh_qq_credential, is_credential_expiring
+from ..login.qqmusic import load_qq_credentials, refresh_qq_credential, is_credential_expiring
 from ...musicuid_config import music_config
 
 # musicu.fcg 同时承担搜索与取流；旧的 client_search_cp 已被腾讯关闭（一律返回 HTTP 500）
@@ -34,22 +35,25 @@ _last_refresh_at: float = 0.0
 
 
 async def _ensure_active_cookie() -> str:
-    """确保 QQ 音乐凭据处于有效状态（若临近过期则自动触发静默续期）。
+    """取一个可用的 QQ 音乐 Cookie，并顺带巡检移动端凭据。
 
-    续期本身要发一次网络请求，所以这里带冷却窗口：命中 104003 之前不会
-    在同一次点歌的多次调用里反复刷新。
+    多账号时按轮换取号，分摊单号的请求频率；续期仍走移动端凭据，
+    且带冷却窗口，命中 104003 之前不会在同一次点歌里反复刷新。
     """
     global _last_refresh_at
-    cred = load_qq_credential()
-    if cred is not None and is_credential_expiring(cred):
+    for cred in load_qq_credentials():
+        if not is_credential_expiring(cred):
+            continue
         now = time.time()
-        if now - _last_refresh_at >= REFRESH_COOLDOWN_SEC:
-            _last_refresh_at = now
-            logger.info("[MusicUID] QQ 音乐移动凭据临近过期，点歌调用前自动触发静默续签...")
-            ok, msg = await refresh_qq_credential(cred)
-            if not ok:
-                logger.warning(f"[MusicUID] QQ 音乐凭据静默续签失败：{msg}，本次仍按现有 Cookie 取流")
-    return music_config.get_config("qqmusic_cookie").data
+        if now - _last_refresh_at < REFRESH_COOLDOWN_SEC:
+            break
+        _last_refresh_at = now
+        logger.info("[MusicUID] QQ 音乐移动凭据临近过期，取流前自动触发静默续签...")
+        ok, msg = await refresh_qq_credential(cred)
+        if not ok:
+            logger.warning(f"[MusicUID] QQ 音乐凭据静默续签失败：{msg}，本次仍按现有 Cookie 取流")
+        break
+    return pick_cookie("qq")
 
 
 async def _cookie_headers() -> dict[str, str]:

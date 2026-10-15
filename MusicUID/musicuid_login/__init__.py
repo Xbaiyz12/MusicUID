@@ -650,6 +650,8 @@ async def handle_set_cookie(bot: Bot, ev: Event) -> None:
             )
             return
         music_config.set_config("qqmusic_cookie", formatted)
+        # 手动导入的号也入账号池，才能参与轮换取流
+        _save_platform_account("qq", "", formatted)
         logger.info("[MusicUID] 已成功更新 QQ 音乐 Cookie")
         await bot.send(f"✅ 已成功更新【QQ 音乐】Cookie 凭据！\n已格式化提取核心票据：\n{_mask_cookie(formatted)}")
         return
@@ -943,7 +945,7 @@ async def handle_account_list(bot: Bot, ev: Event) -> None:
     from ..utils.accounts import load_accounts
 
     sections: list[str] = []
-    for platform, title in (("netease", "网易云音乐"), ("kugou", "酷狗音乐")):
+    for platform, title in (("netease", "网易云音乐"), ("qq", "QQ 音乐"), ("kugou", "酷狗音乐")):
         accounts = load_accounts(platform)
         if not accounts:
             sections.append(f"📭【{title}】未加号，当前用配置项里的那一个")

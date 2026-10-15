@@ -46,7 +46,7 @@ HELP_SECTIONS: Final[tuple[HelpSection, ...]] = (
             HelpItem("酷狗登录", "手机酷狗扫码"),
             HelpItem("网易云登录", "扫码；官方常在确认环节拒绝，扫不动用下一条"),
             HelpItem("网易云登录 <手机号>", "验证码登录，再回复「网易云验证码 <数字>」"),
-            HelpItem("点歌账号", "查看各平台账号池，多个号轮换取流"),
+            HelpItem("点歌账号", "查看网易云 / QQ音乐 / 酷狗账号池，多号轮换取流"),
             HelpItem("点歌状态", "查看凭据与音源配置状态"),
         ),
     ),
@@ -84,10 +84,7 @@ HELP_SECTIONS: Final[tuple[HelpSection, ...]] = (
     ),
     HelpSection(
         "其他",
-        (
-            HelpItem("发送音乐分享链接", "自动解析网易云 / QQ / 酷狗单曲或歌单"),
-            HelpItem("长回复自动出图", "超过 50 字的回复渲染成图片，不再刷屏"),
-        ),
+        (HelpItem("发送音乐分享链接", "自动解析网易云 / QQ / 酷狗单曲或歌单"),),
     ),
 )
 

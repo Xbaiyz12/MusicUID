@@ -85,16 +85,41 @@ def music_u_of(cookie: str) -> str:
     return cookie_value_of(cookie, "MUSIC_U")
 
 
+def _qq_account_key(cookie: str) -> str:
+    """QQ 音乐凭据是 JSON 串，按 musicid / uin / nick 去重。
+
+    Args:
+        cookie: JSON 序列化的凭据。
+
+    Returns:
+        唯一标识，解析失败时返回空串。
+    """
+    try:
+        raw = json.loads(cookie)
+    except ValueError:
+        return ""
+    entry = to_obj(raw)
+    for field in ("musicid", "uin", "nick"):
+        value = entry.get(field)
+        if isinstance(value, str) and value:
+            return value
+        if isinstance(value, int) and value > 0:
+            return str(value)
+    return ""
+
+
 def account_key(platform: str, cookie: str) -> str:
     """取某个平台 Cookie 的账号唯一标识，用于去重。
 
     Args:
         platform: 平台标识。
-        cookie: 该平台的 Cookie 串。
+        cookie: 该平台的 Cookie 串（QQ 音乐是 JSON 串）。
 
     Returns:
         唯一标识，取不到时返回空串。
     """
+    if platform == "qq":
+        return _qq_account_key(cookie)
     for field in _ID_FIELDS.get(platform, ("MUSIC_U",)):
         value = cookie_value_of(cookie, field)
         if value:

@@ -23,6 +23,9 @@ from ..resource.RESOURCE_PATH import QQ_CREDENTIAL_PATH
 # 并发刷新会用同一个 refresh_token，后写者把已轮换的凭据覆盖回旧值
 _refresh_lock = asyncio.Lock()
 
+# 取流轮询游标：进程内递增即可，重启后从头开始
+_qq_cursor = 0
+
 
 def _parse_int(value: object, fallback: int) -> int:
     """把接口返回的数值字段安全转成 int，畸形值回退到 fallback。"""
@@ -70,40 +73,110 @@ def hash33(s: str, h: int = 0) -> int:
     return 2147483647 & h
 
 
-def load_qq_credential() -> QQMobileCredential | None:
-    """读取已保存的 QQ 音乐移动端凭证。"""
+def _parse_credential(raw: dict[str, object]) -> QQMobileCredential | None:
+    """把原始字典还原成凭据对象。
+
+    Args:
+        raw: 已解析的 JSON 对象。
+
+    Returns:
+        凭据对象；缺少必要字段时返回 ``None``。
+    """
+    musickey = str(raw.get("musickey", ""))
+    refresh_token = str(raw.get("refresh_token", ""))
+    if not musickey or not refresh_token:
+        return None
+    return QQMobileCredential(
+        openid=str(raw.get("openid", "")),
+        refresh_token=refresh_token,
+        access_token=str(raw.get("access_token", "")),
+        expired_at=int(str(raw.get("expired_at", 0))),
+        musicid=int(str(raw.get("musicid", 0))),
+        musickey=musickey,
+        unionid=str(raw.get("unionid", "")),
+        str_musicid=str(raw.get("str_musicid", "")),
+        refresh_key=str(raw.get("refresh_key", "")),
+        musickey_create_time=int(str(raw.get("musickey_create_time", 0))),
+        key_expires_in=int(str(raw.get("key_expires_in", 0))),
+        login_type=int(str(raw.get("login_type", 2))),
+        nick=str(raw.get("nick", "")),
+    )
+
+
+def _parse_credential_text(text: str) -> QQMobileCredential | None:
+    """把 JSON 文本还原成凭据对象，解析失败返回 ``None``。"""
+    try:
+        raw = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(raw, dict):
+        return None
+    return _parse_credential(raw)
+
+
+def _credential_to_json(cred: QQMobileCredential) -> str:
+    """把凭据序列化成 JSON 串，用于存进账号池。"""
+    return json.dumps(cred, ensure_ascii=False)
+
+
+def _load_legacy_credential() -> QQMobileCredential | None:
+    """读取旧版单文件凭据（账号池为空时的兜底）。"""
     if not QQ_CREDENTIAL_PATH.exists():
         return None
     try:
-        content = QQ_CREDENTIAL_PATH.read_text(encoding="utf-8")
-        raw: dict[str, object] = json.loads(content)
-        musicid = int(str(raw.get("musicid", 0)))
-        musickey = str(raw.get("musickey", ""))
-        refresh_token = str(raw.get("refresh_token", ""))
-        if not musickey or not refresh_token:
-            return None
-        return QQMobileCredential(
-            openid=str(raw.get("openid", "")),
-            refresh_token=refresh_token,
-            access_token=str(raw.get("access_token", "")),
-            expired_at=int(str(raw.get("expired_at", 0))),
-            musicid=musicid,
-            musickey=musickey,
-            unionid=str(raw.get("unionid", "")),
-            str_musicid=str(raw.get("str_musicid", "")),
-            refresh_key=str(raw.get("refresh_key", "")),
-            musickey_create_time=int(str(raw.get("musickey_create_time", 0))),
-            key_expires_in=int(str(raw.get("key_expires_in", 0))),
-            login_type=int(str(raw.get("login_type", 2))),
-            nick=str(raw.get("nick", "")),
-        )
-    except (OSError, json.JSONDecodeError, ValueError) as e:
+        return _parse_credential_text(QQ_CREDENTIAL_PATH.read_text(encoding="utf-8"))
+    except OSError as e:
         logger.warning(f"[MusicUID] 读取 QQ 音乐移动凭据异常: {e}")
         return None
 
 
+def load_qq_credential() -> QQMobileCredential | None:
+    """读取 QQ 音乐移动端凭据：优先账号池，池空时回退旧单文件。"""
+    from ..accounts import load_accounts
+
+    for item in load_accounts("qq"):
+        parsed = _parse_credential_text(item.cookie)
+        if parsed is not None:
+            return parsed
+    return _load_legacy_credential()
+
+
+def load_qq_credentials() -> list[QQMobileCredential]:
+    """读取账号池里的全部 QQ 音乐凭据；池空时用旧单文件凑一个。
+
+    Returns:
+        凭据列表，可能为空。
+    """
+    from ..accounts import load_accounts
+
+    creds: list[QQMobileCredential] = []
+    for item in load_accounts("qq"):
+        parsed = _parse_credential_text(item.cookie)
+        if parsed is not None:
+            creds.append(parsed)
+    if creds:
+        return creds
+    legacy = _load_legacy_credential()
+    return [legacy] if legacy is not None else []
+
+
+def pick_qq_credential() -> QQMobileCredential | None:
+    """按轮询取一个 QQ 音乐凭据，用于取流。
+
+    Returns:
+        凭据对象；一个都没有时返回 ``None``。
+    """
+    global _qq_cursor
+    creds = load_qq_credentials()
+    if not creds:
+        return None
+    index = _qq_cursor % len(creds)
+    _qq_cursor = (index + 1) % len(creds)
+    return creds[index]
+
+
 def save_qq_credential(cred: QQMobileCredential) -> None:
-    """保存 QQ 音乐移动端凭据至本地文件。
+    """保存 QQ 音乐移动端凭据：旧文件与账号池双写。
 
     写临时文件再原子替换：直接覆写时中途崩溃会留下半截 JSON，
     下次读取解析失败就会被当成「未绑定」，用户只能重新扫码。
@@ -237,15 +310,15 @@ async def _refresh_qq_credential_locked(cred: QQMobileCredential | None = None) 
 
 
 async def auto_refresh_qq_job() -> None:
-    """定时巡检与自动续签 QQ 音乐凭证。"""
-    cred = load_qq_credential()
-    if cred is None:
-        return
-    if is_credential_expiring(cred):
-        logger.info("[MusicUID] 检测到 QQ 音乐移动凭据即将过期，正在自动续期...")
+    """定时巡检并续签账号池里的每一个 QQ 音乐凭据。"""
+    for cred in load_qq_credentials():
+        if not is_credential_expiring(cred):
+            continue
+        owner = cred.get("nick") or str(cred.get("musicid", ""))
+        logger.info(f"[MusicUID] QQ 音乐凭据（{owner}）即将过期，正在自动续期...")
         ok, msg = await refresh_qq_credential(cred)
         if not ok:
-            logger.warning(f"[MusicUID] QQ 音乐定时自动续期失败: {msg}")
+            logger.warning(f"[MusicUID] QQ 音乐定时自动续期失败（{owner}）: {msg}")
 
 
 def parse_qq_cookie(cookie_str: str) -> dict[str, str]:
