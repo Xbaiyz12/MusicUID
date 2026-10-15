@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from gsuid_core.logger import logger
 
-from .json_tools import to_obj, get_str, get_list
+from .json_tools import to_obj, get_int, get_str, get_list
 from ..musicuid_config import music_config
 from .resource.RESOURCE_PATH import MAIN_PATH
 
@@ -40,6 +40,9 @@ _ID_FIELDS: Final[dict[str, tuple[str, ...]]] = {
 # 轮询游标：每个平台一份，进程内递增即可
 _cursor: dict[str, int] = {}
 
+# 连续取流失败这么多次就把账号挂起，等每日复查再给一次机会
+MAX_ACCOUNT_FAILURES: Final[int] = 3
+
 
 @dataclass(frozen=True, slots=True)
 class MusicAccount:
@@ -55,6 +58,7 @@ class MusicAccount:
     cookie: str
     added_at: str
     active: bool = True
+    fail_count: int = 0
 
 
 def cookie_value_of(cookie: str, key: str) -> str:
@@ -172,6 +176,7 @@ def _parse_accounts(items: object) -> list[MusicAccount]:
                 cookie=cookie,
                 added_at=get_str(entry, "added_at"),
                 active=entry.get("active") is not False,
+                fail_count=get_int(entry, "fail_count", 0),
             )
         )
     return accounts
@@ -193,6 +198,7 @@ def _write_all(data: dict[str, list[MusicAccount]]) -> bool:
                 "cookie": item.cookie,
                 "added_at": item.added_at,
                 "active": item.active,
+                "fail_count": item.fail_count,
             }
             for item in accounts
         ]
@@ -332,6 +338,68 @@ def remove_account(platform: str, index: int) -> str:
     if not _write_all(data):
         return ""
     return removed.name
+
+
+def _update_failure(platform: str, cookie: str, suspend: bool) -> bool:
+    """更新某账号的连续失败计数。
+
+    Args:
+        platform: 平台标识。
+        cookie: 账号的 Cookie（与池子里存的同一形态）。
+        suspend: ``True`` 表示记一次失败并可触发挂起；``False`` 表示清零。
+
+    Returns:
+        本次是否因此把账号挂起。
+    """
+    key = account_key(platform, cookie)
+    if not key:
+        return False
+    data = _read_all()
+    accounts = data.get(platform, [])
+    for index, item in enumerate(accounts):
+        if account_key(platform, item.cookie) != key:
+            continue
+        fails = item.fail_count + 1 if suspend else 0
+        active = item.active
+        suspended = False
+        if suspend and fails >= MAX_ACCOUNT_FAILURES:
+            # 挂起并把计数归零：下次复活若仍失败，要重新数满一整轮
+            active = False
+            suspended = True
+            fails = 0
+        accounts[index] = MusicAccount(
+            name=item.name,
+            cookie=item.cookie,
+            added_at=item.added_at,
+            active=active,
+            fail_count=fails,
+        )
+        data[platform] = accounts
+        return _write_all(data) and suspended
+    return False
+
+
+def record_failure(platform: str, cookie: str) -> bool:
+    """记录一次取流失败；连续失败到阈值就把账号挂起。
+
+    Args:
+        platform: 平台标识。
+        cookie: 失败的那个账号的 Cookie。
+
+    Returns:
+        本次是否因此挂起了账号。
+    """
+    return _update_failure(platform, cookie, suspend=True)
+
+
+def reset_failure(platform: str, cookie: str) -> None:
+    """取流成功，清掉该账号的连续失败计数。
+
+    Args:
+        platform: 平台标识。
+        cookie: 成功的那个账号的 Cookie。
+    """
+    _update_failure(platform, cookie, suspend=False)
 
 
 def iter_cookies(platform: str, limit: int = 3) -> list[str]:

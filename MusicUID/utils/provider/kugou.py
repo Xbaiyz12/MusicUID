@@ -10,7 +10,7 @@ from gsuid_core.logger import logger
 
 from .base import SongInfo, SongCollection
 from ..http import get_json
-from ..accounts import iter_cookies
+from ..accounts import iter_cookies, reset_failure, record_failure
 from .custom_api import resolve_custom_api
 from ..json_tools import to_obj, get_int, get_obj, get_str, get_list
 
@@ -170,7 +170,10 @@ class KugouProvider:
         for cookie in iter_cookies("kugou"):
             url = await self._logged_play_url(song, cookie)
             if url:
+                reset_failure("kugou", cookie)
                 return url
+            # 连续失败够数会被挂起，不再拖累后续点歌
+            record_failure("kugou", cookie)
         url = await self._anonymous_play_url(song)
         if url:
             return url

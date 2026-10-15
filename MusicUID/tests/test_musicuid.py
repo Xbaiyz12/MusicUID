@@ -1363,3 +1363,31 @@ def test_activate_account_revives(tmp_path: pytest.TempPathFactory, monkeypatch:
     assert accounts.load_accounts("netease")[0].active is True
     # 已启用的账号不再重复处理
     assert accounts.activate_account("netease", key) is False
+
+
+def test_failure_suspends_account(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """连续取流失败到阈值就自动挂起，成功一次则清零。"""
+    from MusicUID.MusicUID.utils import accounts
+
+    monkeypatch.setattr(accounts, "ACCOUNTS_PATH", tmp_path / "accounts.json")
+    monkeypatch.setattr(accounts, "LEGACY_NETEASE_PATH", tmp_path / "legacy.json")
+    accounts.save_account("netease", "坏号", "bad_u")
+    cookie = "MUSIC_U=bad_u; os=pc"
+
+    assert accounts.record_failure("netease", cookie) is False  # 第 1 次
+    assert accounts.record_failure("netease", cookie) is False  # 第 2 次
+    assert accounts.record_failure("netease", cookie) is True  # 第 3 次 → 挂起
+    item = accounts.load_accounts("netease")[0]
+    assert item.active is False
+    assert item.fail_count == 0  # 挂起时计数归零，复活后要重新数满一轮
+
+    # 挂起后不再参与取流，回退到配置项
+    monkeypatch.setattr(accounts.music_config, "get_config", lambda name: SimpleNamespace(data="cfg_u"))
+    assert accounts.pick_cookie("netease") == "MUSIC_U=cfg_u; os=pc"
+
+    # 复活后成功一次就能把计数清零
+    key = accounts.account_key("netease", cookie)
+    assert accounts.activate_account("netease", key) is True
+    accounts.record_failure("netease", cookie)
+    accounts.reset_failure("netease", cookie)
+    assert accounts.load_accounts("netease")[0].fail_count == 0

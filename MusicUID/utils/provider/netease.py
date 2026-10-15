@@ -275,7 +275,7 @@ class NeteaseProvider:
         try:
             from Crypto.Cipher import AES  # noqa: F401
 
-            from ..accounts import iter_cookies
+            from ..accounts import iter_cookies, reset_failure, record_failure
             from .netease_crypto import weapi_form
         except ImportError as e:
             logger.debug(f"[MusicUID] weapi 不可用（缺 pycryptodome）：{e}")
@@ -308,6 +308,9 @@ class NeteaseProvider:
                 if hit:
                     break
             if hit:
+                reset_failure("netease", cookie)
                 logger.debug(f"[MusicUID] weapi 命中 {level}：{song.name}")
                 return hit
+            # 这个号取不到就记一次失败，连续失败够数会被挂起，不再拖累后续点歌
+            record_failure("netease", cookie)
         return ""

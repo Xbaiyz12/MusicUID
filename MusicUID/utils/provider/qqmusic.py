@@ -8,7 +8,7 @@ from gsuid_core.logger import logger
 
 from .base import SongInfo, SongCollection
 from ..http import get_json, post_json
-from ..accounts import iter_cookies
+from ..accounts import iter_cookies, reset_failure, record_failure
 from .custom_api import resolve_custom_api
 from ..json_tools import to_obj, get_int, get_obj, get_str, get_list, join_names
 from ..login.qqmusic import load_qq_credentials, refresh_qq_credential, is_credential_expiring
@@ -272,9 +272,14 @@ class QqMusicProvider:
                 purl = get_str(infos[0], "purl") if infos else ""
                 hosts = [item for item in get_list(data, "sip") if isinstance(item, str) and item]
                 if purl and hosts:
+                    if raw_cookie:
+                        reset_failure("qq", raw_cookie)
                     return f"{hosts[0]}{purl}"
                 result = get_int(infos[0], "result") if infos else "none"
                 logger.debug(f"[MusicUID] QQ音乐 {suffix} 档未下发 {song.name}：result={result}")
+            # 这个号所有档位都没下发，记一次失败；连续失败够数会被挂起
+            if raw_cookie:
+                record_failure("qq", raw_cookie)
 
         # 官方接口未下发有效直链（如 VIP 受限或无权播放）时，自动触发自建微服务兜底
         if priority != "custom_first":
