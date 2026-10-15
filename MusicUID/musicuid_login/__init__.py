@@ -985,3 +985,31 @@ async def handle_account_list(bot: Bot, ev: Event) -> None:
         sections.append("\n".join(lines))
     sections.append("➕ 加号：「网易云登录」/「酷狗登录」扫码，或「网易云登录 <手机号>」验证码")
     await send_text_card(bot, "\n\n".join(sections), "音乐账号池")
+
+
+@sv_login.on_command(("点歌删号", "删除账号"), block=True, to_ai="从账号池里按序号删除账号")
+async def handle_account_remove(bot: Bot, ev: Event) -> None:
+    """按序号删除账号池里的账号（序号见「点歌账号」）。"""
+    if not is_login_authorized(ev):
+        await bot.send("❌ 权限不足：仅主人及登录白名单用户可管理账号池。")
+        return
+
+    from ..utils.accounts import remove_account
+    from ..utils.provider import resolve_platform
+
+    parts = ev.text.strip().split()
+    if len(parts) < 2:
+        await bot.send("用法：点歌删号 <平台> <序号>，例如 `点歌删号 网易云 2`（序号见「点歌账号」）")
+        return
+    platform = resolve_platform(parts[0])
+    if platform is None:
+        await bot.send("❌ 认不出平台，请写 网易云 / qq / 酷狗")
+        return
+    if not parts[1].isdigit():
+        await bot.send("❌ 序号必须是数字，例如 `点歌删号 网易云 2`")
+        return
+    removed = remove_account(platform, int(parts[1]))
+    if not removed:
+        await bot.send(f"❌ 没有第 {parts[1]} 个账号，发送「点歌账号」看看当前列表。")
+        return
+    await bot.send(f"✅ 已从账号池删除【{platform}】的账号：{removed}")

@@ -23,9 +23,6 @@ from ..resource.RESOURCE_PATH import QQ_CREDENTIAL_PATH
 # 并发刷新会用同一个 refresh_token，后写者把已轮换的凭据覆盖回旧值
 _refresh_lock = asyncio.Lock()
 
-# 取流轮询游标：进程内递增即可，重启后从头开始
-_qq_cursor = 0
-
 
 def _parse_int(value: object, fallback: int) -> int:
     """把接口返回的数值字段安全转成 int，畸形值回退到 fallback。"""
@@ -114,11 +111,6 @@ def _parse_credential_text(text: str) -> QQMobileCredential | None:
     return _parse_credential(raw)
 
 
-def _credential_to_json(cred: QQMobileCredential) -> str:
-    """把凭据序列化成 JSON 串，用于存进账号池。"""
-    return json.dumps(cred, ensure_ascii=False)
-
-
 def _load_legacy_credential() -> QQMobileCredential | None:
     """读取旧版单文件凭据（账号池为空时的兜底）。"""
     if not QQ_CREDENTIAL_PATH.exists():
@@ -158,21 +150,6 @@ def load_qq_credentials() -> list[QQMobileCredential]:
         return creds
     legacy = _load_legacy_credential()
     return [legacy] if legacy is not None else []
-
-
-def pick_qq_credential() -> QQMobileCredential | None:
-    """按轮询取一个 QQ 音乐凭据，用于取流。
-
-    Returns:
-        凭据对象；一个都没有时返回 ``None``。
-    """
-    global _qq_cursor
-    creds = load_qq_credentials()
-    if not creds:
-        return None
-    index = _qq_cursor % len(creds)
-    _qq_cursor = (index + 1) % len(creds)
-    return creds[index]
 
 
 def save_qq_credential(cred: QQMobileCredential) -> None:

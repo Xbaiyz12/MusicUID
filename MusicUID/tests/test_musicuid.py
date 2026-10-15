@@ -1311,7 +1311,7 @@ def test_accounts_pool_roundtrip(tmp_path: pytest.TempPathFactory, monkeypatch: 
     assert accounts.remove_account("netease", 9) == ""
 
     # 账号池非空时轮询取号；只剩一个号时每次都取它
-    assert accounts.pick_cookie("netease").startswith("MUSIC_U=")
+    assert accounts.iter_cookies("netease", limit=1)[0].startswith("MUSIC_U=")
 
 
 def test_pick_cookie_falls_back_to_config(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1321,9 +1321,9 @@ def test_pick_cookie_falls_back_to_config(monkeypatch: pytest.MonkeyPatch) -> No
     # 账号池为空时必须回退配置项，单账号用户不受影响
     monkeypatch.setattr(accounts, "load_accounts", lambda platform: [])
     monkeypatch.setattr(music_config, "get_config", lambda name: SimpleNamespace(data="fallback_u"))
-    assert accounts.pick_cookie("netease") == "MUSIC_U=fallback_u; os=pc"
+    assert accounts.iter_cookies("netease", limit=1) == ["MUSIC_U=fallback_u; os=pc"]
     # 酷狗不做 MUSIC_U / os=pc 之类的改写
-    assert accounts.pick_cookie("kugou") == "fallback_u"
+    assert accounts.iter_cookies("kugou", limit=1) == ["fallback_u"]
 
 
 def test_pick_cookie_skips_suspended(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1336,7 +1336,7 @@ def test_pick_cookie_skips_suspended(tmp_path: pytest.TempPathFactory, monkeypat
     assert accounts.save_account("netease", "会员号", "vip_u", active=True) is True
 
     # 池里同时有挂起与启用的号时，只会取到启用那个
-    assert accounts.pick_cookie("netease") == "MUSIC_U=vip_u; os=pc"
+    assert accounts.iter_cookies("netease", limit=1) == ["MUSIC_U=vip_u; os=pc"]
 
     # 只剩挂起账号时回退配置项，而不是拿挂起号去取流
     monkeypatch.setattr(
@@ -1347,7 +1347,7 @@ def test_pick_cookie_skips_suspended(tmp_path: pytest.TempPathFactory, monkeypat
         ],
     )
     monkeypatch.setattr(accounts.music_config, "get_config", lambda name: SimpleNamespace(data="cfg_u"))
-    assert accounts.pick_cookie("netease") == "MUSIC_U=cfg_u; os=pc"
+    assert accounts.iter_cookies("netease", limit=1) == ["MUSIC_U=cfg_u; os=pc"]
 
 
 def test_activate_account_revives(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1383,7 +1383,7 @@ def test_failure_suspends_account(tmp_path: pytest.TempPathFactory, monkeypatch:
 
     # 挂起后不再参与取流，回退到配置项
     monkeypatch.setattr(accounts.music_config, "get_config", lambda name: SimpleNamespace(data="cfg_u"))
-    assert accounts.pick_cookie("netease") == "MUSIC_U=cfg_u; os=pc"
+    assert accounts.iter_cookies("netease", limit=1) == ["MUSIC_U=cfg_u; os=pc"]
 
     # 复活后成功一次就能把计数清零
     key = accounts.account_key("netease", cookie)

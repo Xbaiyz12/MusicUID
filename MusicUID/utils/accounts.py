@@ -426,18 +426,3 @@ def iter_cookies(platform: str, limit: int = 3) -> list[str]:
     _cursor[platform] = (start + 1) % len(accounts)
     ordered = accounts[start:] + accounts[:start]
     return [normalize_cookie(platform, item.cookie) for item in ordered[:limit]]
-
-
-def pick_cookie(platform: str) -> str:
-    """按轮询取某平台一个「已启用」账号的 Cookie。
-
-    账号池为空或全部挂起时回退到该平台的配置项，保证单账号用户可用。
-
-    Args:
-        platform: 平台标识。
-
-    Returns:
-        可直接放进请求头的 Cookie 串，没有可用账号时为空串。
-    """
-    cookies = iter_cookies(platform, limit=1)
-    return cookies[0] if cookies else ""
