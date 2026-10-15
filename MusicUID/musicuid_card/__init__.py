@@ -54,12 +54,15 @@ class HelpSection:
     Attributes:
         title: 分组标题。
         items: 组内指令。
+        theme: 分组主题色，取值见 ``help.html`` 的 ``p-*`` 类
+            （``search`` 紫 / ``login`` 橙 / ``link`` 绿 / ``config`` 蓝）。
         tag: 组内条目的默认角标文案。
         tag_type: 组内条目的默认角标配色。
     """
 
     title: str
     items: tuple[HelpItem, ...]
+    theme: str = "search"
     tag: str = ""
     tag_type: str = ""
 
@@ -266,7 +269,7 @@ async def send_help_card(bot: Bot, sections: tuple[HelpSection, ...], fallback_t
         data: dict[str, object] = {
             "sections": [
                 {
-                    "type": "cmd",
+                    "type": section.theme,
                     "title": section.title,
                     "commands": [
                         {
