@@ -142,21 +142,59 @@ async def _claim(cookie: str) -> tuple[ClaimedTask, ...]:
     return tuple(claimed)
 
 
-async def run_netease_daily_task() -> NeteaseTaskResult:
-    """执行一次网易云签到与云贝领取。
+def _account_targets() -> list[tuple[str, str]]:
+    """列出要跑任务的账号。
+
+    账号池为空时回退到配置项里的单个账号，保证老用户不受影响。
 
     Returns:
-        本次执行结果；网络或凭据异常时 ``ok`` 为 ``False``。
+        ``[(备注名, Cookie 头), ...]``；没有可用凭据时为空列表。
     """
-    cookie = weapi_cookie(music_config.get_config("netease_cookie").data)
-    if not cookie:
-        return NeteaseTaskResult(False, 0, "未配置网易云 Cookie", (), False)
+    from ..utils.accounts import load_accounts
+
+    accounts = load_accounts()
+    if accounts:
+        return [(item.name, weapi_cookie(item.cookie)) for item in accounts]
+    fallback = weapi_cookie(music_config.get_config("netease_cookie").data)
+    return [("默认账号", fallback)] if fallback else []
+
+
+async def _run_for_cookie(cookie: str) -> NeteaseTaskResult:
+    """对单个凭据执行签到与云贝领取。
+
+    Args:
+        cookie: 已拼好的 Cookie 头。
+
+    Returns:
+        该账号的执行结果。
+    """
     try:
         point, message = await _sign(cookie)
         claimed = await _claim(cookie)
     except MusicRequestError as e:
         return NeteaseTaskResult(False, 0, f"请求失败：{e}", (), False)
     return NeteaseTaskResult(True, point, message, claimed, True)
+
+
+async def run_netease_daily_task() -> NeteaseTaskResult:
+    """执行一次网易云签到与云贝领取（单账号，用第一个可用凭据）。
+
+    Returns:
+        本次执行结果；网络或凭据异常时 ``ok`` 为 ``False``。
+    """
+    targets = _account_targets()
+    if not targets:
+        return NeteaseTaskResult(False, 0, "未配置网易云 Cookie", (), False)
+    return await _run_for_cookie(targets[0][1])
+
+
+async def run_all_netease_tasks() -> list[tuple[str, NeteaseTaskResult]]:
+    """对账号池里的每个账号各跑一次签到与云贝领取。
+
+    Returns:
+        ``[(备注名, 结果), ...]``；没有可用账号时为空列表。
+    """
+    return [(name, await _run_for_cookie(cookie)) for name, cookie in _account_targets()]
 
 
 def format_task_report(result: NeteaseTaskResult) -> str:
@@ -235,19 +273,47 @@ async def notify_task_result(target: str, text: str) -> bool:
     return True
 
 
+def format_multi_report(results: list[tuple[str, NeteaseTaskResult]]) -> str:
+    """把多账号的执行结果拼成一条回执。
+
+    Args:
+        results: :func:`run_all_netease_tasks` 的返回值。
+
+    Returns:
+        多行文本；只有一个账号时复用单账号回执。
+    """
+    if not results:
+        return "❌ 未配置网易云 Cookie，无法执行每日任务。"
+    if len(results) == 1:
+        return format_task_report(results[0][1])
+    lines = [f"【网易云每日任务】共 {len(results)} 个账号"]
+    for name, result in results:
+        if not result.ok:
+            lines.append(f"• {name}：{result.sign_message}")
+            continue
+        total = sum(item.point for item in result.claimed)
+        lines.append(f"• {name}：{result.sign_message}；领取 {len(result.claimed)} 项 +{total}")
+    lines.append("")
+    lines.append("💡 只做签到与领取，不刷听歌时长等动作")
+    return "\n".join(lines)
+
+
 async def auto_daily_task_job() -> None:
     """定时执行网易云每日任务（开关关闭时直接返回）。"""
     if not music_config.get_config("netease_task_enable").data:
         return
-    result = await run_netease_daily_task()
-    if not result.ok:
-        logger.warning(f"[MusicUID] 网易云每日任务失败：{result.sign_message}")
-    else:
-        logger.info(f"[MusicUID] 网易云每日任务完成：{result.sign_message}，领取 {len(result.claimed)} 项")
+    results = await run_all_netease_tasks()
+    if not results:
+        logger.warning("[MusicUID] 网易云每日任务跳过：没有可用账号")
+        return
+    failed = [name for name, item in results if not item.ok]
+    if failed:
+        logger.warning(f"[MusicUID] 网易云每日任务部分失败：{'、'.join(failed)}")
+    logger.info(f"[MusicUID] 网易云每日任务完成：{len(results)} 个账号")
 
     target = music_config.get_config("netease_task_notify").data
     if target:
-        await notify_task_result(target, format_task_report(result))
+        await notify_task_result(target, format_multi_report(results))
 
 
 @sv_task.on_fullmatch(
@@ -261,8 +327,7 @@ async def handle_daily_task(bot: Bot, ev: Event) -> None:
         await bot.send("❌ 权限不足：仅主人及登录白名单用户可执行音乐任务。")
         return
     await bot.send("正在执行网易云签到与云贝领取...")
-    result = await run_netease_daily_task()
-    report = format_task_report(result)
+    report = format_multi_report(await run_all_netease_tasks())
     await bot.send(report)
     # 手动执行也同步到通知目标，方便在别的会话里确认结果（同群不重复发）
     target = music_config.get_config("netease_task_notify").data

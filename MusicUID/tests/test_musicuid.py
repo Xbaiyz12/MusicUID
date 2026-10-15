@@ -1189,12 +1189,12 @@ def test_handle_login_direct_trigger(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(sent_messages) >= 1
     assert "正在生成【酷狗音乐】登录二维码" in str(sent_messages[0])
 
-    # 3. 发送 "网易云登录" -> 引导使用 Cookie 绑定
+    # 3. 发送 "网易云登录" -> 现在走扫码流程（官方已不再拦截第三方扫码）
     sent_messages.clear()
     ev_wyy = Event(user_id="10001", user_pm=1, command="网易云登录", text="")
     asyncio.run(handle_login(bot, ev_wyy))
     assert len(sent_messages) >= 1
-    assert "网易云音乐 Cookie 获取指引" in str(sent_messages[0])
+    assert "正在生成【网易云音乐】登录二维码" in str(sent_messages[0])
 
     # 4. 发送 "QQ登录" -> 直接进入移动端扫码流程
     sent_messages.clear()
@@ -1250,3 +1250,41 @@ def test_notify_target_parsing() -> None:
     # 目标为空时必须直接返回，不触碰适配器（否则会误发到任意群）
     assert asyncio.run(musicuid_tasks.notify_task_result("", "x")) is False
     assert asyncio.run(musicuid_tasks.notify_task_result("   ", "x")) is False
+
+
+def test_accounts_pool_roundtrip(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    from MusicUID.MusicUID.utils import accounts
+
+    monkeypatch.setattr(accounts, "ACCOUNTS_PATH", tmp_path / "accounts.json")
+    assert accounts.load_accounts() == []
+
+    assert accounts.save_account("主号", "MUSIC_U=abc; os=pc") is True
+    assert accounts.save_account("小号", "def") is True
+    assert [item.name for item in accounts.load_accounts()] == ["主号", "小号"]
+
+    # 同一个 MUSIC_U 再存一次只更新备注名，不新增条目
+    assert accounts.save_account("主号改名", "abc") is True
+    loaded = accounts.load_accounts()
+    assert len(loaded) == 2
+    assert {item.name for item in loaded} == {"主号改名", "小号"}
+    # 落盘的 Cookie 只保留 MUSIC_U
+    renamed = [item for item in loaded if item.name == "主号改名"]
+    assert renamed[0].cookie == "MUSIC_U=abc"
+
+    # 删除按序号，但保存顺序不保证，所以只校验数量与合法性
+    assert accounts.remove_account(1) in {"主号改名", "小号"}
+    assert len(accounts.load_accounts()) == 1
+    assert accounts.remove_account(9) == ""
+
+    # 账号池非空时轮询取号；只剩一个号时每次都取它
+    assert accounts.pick_cookie().startswith("MUSIC_U=")
+
+
+def test_pick_cookie_falls_back_to_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    from MusicUID.MusicUID.utils import accounts
+    from MusicUID.MusicUID.musicuid_config import music_config
+
+    # 账号池为空时必须回退配置项，单账号用户不受影响
+    monkeypatch.setattr(accounts, "load_accounts", lambda: [])
+    monkeypatch.setattr(music_config, "get_config", lambda name: SimpleNamespace(data="fallback_u"))
+    assert accounts.pick_cookie() == "MUSIC_U=fallback_u; os=pc"

@@ -275,12 +275,14 @@ class NeteaseProvider:
         try:
             from Crypto.Cipher import AES  # noqa: F401
 
-            from .netease_crypto import weapi_form, weapi_cookie
+            from ..accounts import pick_cookie
+            from .netease_crypto import weapi_form
         except ImportError as e:
             logger.debug(f"[MusicUID] weapi 不可用（缺 pycryptodome）：{e}")
             return ""
         headers = dict(HEADERS)
-        cookie = weapi_cookie(music_config.get_config("netease_cookie").data)
+        # 多账号时轮换取号，分摊单号的请求频率
+        cookie = pick_cookie()
         if cookie:
             headers["Cookie"] = cookie
         preferred = music_config.get_config("netease_level").data

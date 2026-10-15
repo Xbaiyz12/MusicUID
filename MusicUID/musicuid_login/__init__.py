@@ -46,7 +46,7 @@ QQ_COOKIE_GUIDE = (
 
 NETEASE_COOKIE_GUIDE = (
     "【网易云音乐 Cookie 获取指引】\n\n"
-    "由于网易云官方升级了严格的风控策略（第三方扫码已被官方拦截），请直接提取 `MUSIC_U` Cookie 进行绑定：\n\n"
+    "如果你不想扫码，也可以直接提取 `MUSIC_U` Cookie 绑定：\n\n"
     "📌 获取步骤：\n"
     "1. 电脑浏览器访问网易云官网：https://music.163.com 并登录账号；\n"
     "2. 按 F12 打开开发者工具，点击【应用】/【Application】或【存储】选项卡；\n"
@@ -56,6 +56,23 @@ NETEASE_COOKIE_GUIDE = (
     "   👉 网易云cookie 你的值\n"
     "   （例如：网易云cookie 00b08a...）"
 )
+
+# 验证码登录是两步交互，这里暂存「用户 -> 手机号」
+_captcha_phone: dict[str, str] = {}
+
+
+def _looks_like_phone(text: str) -> bool:
+    """判断文本是否像 11 位手机号。
+
+    Args:
+        text: 用户输入的文本。
+
+    Returns:
+        是否为手机号。
+    """
+    cleaned = text.strip()
+    return len(cleaned) == 11 and cleaned.isdigit() and cleaned.startswith("1")
+
 
 LOGIN_MENU = (
     "🎵【MusicUID 音乐平台登录与凭据配置】\n\n"
@@ -606,6 +623,8 @@ async def handle_set_cookie(bot: Bot, ev: Event) -> None:
             )
             return
         music_config.set_config("netease_cookie", cookie_to_save)
+        # 手动导入的号也入账号池，才能参与轮换取流
+        _save_netease_account("", cookie_to_save)
         logger.info("[MusicUID] 已成功更新网易云音乐 Cookie")
         await bot.send(f"✅ 已成功更新【网易云音乐】Cookie 凭据！\n已生效凭证：\n{_mask_cookie(cookie_to_save)}")
         return
@@ -706,12 +725,19 @@ async def handle_login(bot: Bot, ev: Event) -> None:
         await bot.send(LOGIN_MENU)
         return
 
-    # 网易云官方已对第三方 Web 扫码接口实施强风控拦截（状态码 882），引导直接使用 Cookie 绑定
-    if provider.platform_name == "netease":
-        await bot.send(
-            "⚠️【网易云音乐】官方近期已关闭并拦截第三方扫码登录（APP 扫码会提示升级或切换登录方式）。\n\n"
-            "💡 建议通过网页端提取 `MUSIC_U` 直接导入绑定（仅需 10 秒）：\n" + NETEASE_COOKIE_GUIDE
-        )
+    # 网易云带手机号时走短信验证码，其余情况统一扫码
+    if provider.platform_name == "netease" and _looks_like_phone(raw_text):
+        from ..utils.login.netease import NeteaseLoginProvider
+
+        if not isinstance(provider, NeteaseLoginProvider):
+            await bot.send("❌ 网易云登录组件不可用。")
+            return
+        ok, tip = await provider.send_captcha(raw_text)
+        if not ok:
+            await bot.send(f"❌ {tip}")
+            return
+        _captcha_phone[ev.user_id] = raw_text
+        await bot.send(f"✅ {tip}\n\n请回复：网易云验证码 <收到的数字>")
         return
 
     # 3. 创建扫码会话（QQ 音乐与酷狗均支持扫码）
@@ -771,6 +797,9 @@ async def _poll_login_status(
                 await bot.send(f"⚠️【{provider.display_name}】登录成功，但凭据写入失败，请检查插件配置后重试")
                 return
             logger.info(f"[MusicUID] {provider.display_name} 扫码登录成功，凭证已保存")
+            # 网易云的扫码结果同时入账号池，多号轮换取流才有意义
+            if provider.platform_name == "netease":
+                _save_netease_account(session.nickname or "", session.cookie)
             success_tip = (
                 f"🎉【{provider.display_name}】扫码登录成功！\n"
                 f"• 用户: {session.nickname or '已登录'}\n"
@@ -791,3 +820,81 @@ async def _poll_login_status(
 
     logger.info(f"[MusicUID] {provider.display_name} 扫码轮询超时结束")
     await bot.send(f"⌛【{provider.display_name}】登录超时，请重新发送指令发起登录。")
+
+
+# ------------------------------------------------- 网易云验证码登录与账号池
+
+
+def _save_netease_account(name: str, cookie: str) -> bool:
+    """把网易云凭据存进账号池，并同步一份到配置项保持兼容。
+
+    Args:
+        name: 账号备注名，留空则自动编号。
+        cookie: 登录返回的 Cookie 串。
+
+    Returns:
+        是否保存成功。
+    """
+    from ..utils.accounts import music_u_of, save_account
+
+    if not save_account(name, cookie):
+        return False
+    music_u = music_u_of(cookie)
+    if music_u:
+        music_config.set_config("netease_cookie", music_u)
+    return True
+
+
+@sv_login.on_command(("网易云验证码", "网易验证码"), block=True, to_ai="用手机短信验证码完成网易云登录")
+async def handle_captcha_login(bot: Bot, ev: Event) -> None:
+    """用手机号 + 短信验证码完成网易云登录。"""
+    if not is_login_authorized(ev):
+        await bot.send("❌ 权限不足：仅主人及登录白名单用户可进行平台登录与凭据配置。")
+        return
+
+    from ..utils.login.netease import NeteaseLoginProvider
+
+    phone = _captcha_phone.get(ev.user_id, "")
+    code = ev.text.strip()
+    if not phone:
+        await bot.send("❌ 请先发送「网易云登录 <手机号>」获取验证码。")
+        return
+    if not code.isdigit() or not 4 <= len(code) <= 8:
+        await bot.send("❌ 验证码应为 4~8 位数字，请重新发送。")
+        return
+
+    provider = get_login_provider("netease")
+    if not isinstance(provider, NeteaseLoginProvider):
+        await bot.send("❌ 网易云登录组件不可用。")
+        return
+    session = await provider.login_by_captcha(phone, code)
+    if session.status != LoginStatus.SUCCESS:
+        await bot.send(f"❌ 登录失败：{session.message}")
+        return
+    _captcha_phone.pop(ev.user_id, None)
+    name = session.nickname or phone
+    if not _save_netease_account(name, session.cookie):
+        await bot.send("❌ 登录成功但凭据保存失败，请查看日志。")
+        return
+    await bot.send(f"🎉【网易云音乐】验证码登录成功！\n• 账号：{name}\n• 已加入账号池，点歌时会与其它账号轮换使用")
+
+
+@sv_login.on_fullmatch(("网易云账号", "点歌账号"), block=True, to_ai="查看已登录的网易云账号池")
+async def handle_account_list(bot: Bot, ev: Event) -> None:
+    """列出账号池里的网易云账号。"""
+    from ..utils.accounts import load_accounts
+
+    accounts = load_accounts()
+    if not accounts:
+        await bot.send(
+            "📭 账号池为空，当前只用配置项里的那一个网易云账号。\n\n"
+            "➕ 添加账号：\n"
+            "• 「网易云登录」扫码添加\n"
+            "• 「网易云登录 <手机号>」用短信验证码添加"
+        )
+        return
+    lines = [f"🎵【网易云账号池】共 {len(accounts)} 个，取流时按顺序轮换：", ""]
+    lines.extend(f"{index}. {item.name}（{_mask_cookie(item.cookie)}）" for index, item in enumerate(accounts, start=1))
+    lines.append("")
+    lines.append("➕ 继续添加：「网易云登录」（扫码）或「网易云登录 <手机号>」（验证码）")
+    await bot.send("\n".join(lines))
