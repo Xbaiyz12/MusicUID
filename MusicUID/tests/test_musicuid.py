@@ -57,6 +57,16 @@ def _clean_sessions():
     session_module._sessions.clear()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_accounts(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """账号池指向临时文件：测试绝不能读写真实凭据，更不能因此发真请求。"""
+    from MusicUID.MusicUID.utils import accounts
+
+    monkeypatch.setattr(accounts, "ACCOUNTS_PATH", tmp_path / "accounts.json")
+    monkeypatch.setattr(accounts, "LEGACY_NETEASE_PATH", tmp_path / "legacy_netease.json")
+    yield
+
+
 def _song(song_id: str = "1") -> SongInfo:
     return SongInfo(platform="netease", song_id=song_id, name="晴天", singers="周杰伦")
 

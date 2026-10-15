@@ -174,8 +174,40 @@ async def cancel_login_tasks() -> None:
 # ---------------------------------------------------------------- 凭据状态数据
 
 
+def _account_note(platform: str, fallback: str) -> str:
+    """账号池的备注行：有几个号、分别是哪些。
+
+    Args:
+        platform: 平台标识。
+        fallback: 账号池为空时的说明。
+
+    Returns:
+        一行说明文本。
+    """
+    from ..utils.accounts import load_accounts
+
+    accounts = load_accounts(platform)
+    if not accounts:
+        return fallback
+    names = "、".join(item.name for item in accounts)
+    return f"账号池 {len(accounts)} 个（{names}），取流时轮换"
+
+
 def _netease_status(raw: object) -> dict[str, object]:
     """组装网易云凭据的状态卡片条目。"""
+    from ..utils.accounts import load_accounts
+
+    accounts = load_accounts("netease")
+    if accounts:
+        return {
+            "key": "netease",
+            "icon": "🔴",
+            "name": "网易云音乐",
+            "state": "ok",
+            "state_text": "已绑定",
+            "value": _mask_cookie(accounts[0].cookie),
+            "note": _account_note("netease", ""),
+        }
     if isinstance(raw, str) and raw.strip():
         return {
             "key": "netease",
@@ -239,6 +271,19 @@ def _qq_status(raw: object) -> dict[str, object]:
 
 def _kugou_status(raw: object) -> dict[str, object]:
     """组装酷狗凭据的状态卡片条目。"""
+    from ..utils.accounts import load_accounts
+
+    accounts = load_accounts("kugou")
+    if accounts:
+        return {
+            "key": "kugou",
+            "icon": "🔵",
+            "name": "酷狗音乐",
+            "state": "ok",
+            "state_text": "已绑定",
+            "value": _mask_cookie(accounts[0].cookie),
+            "note": _account_note("kugou", ""),
+        }
     if isinstance(raw, str) and raw.strip():
         return {
             "key": "kugou",
