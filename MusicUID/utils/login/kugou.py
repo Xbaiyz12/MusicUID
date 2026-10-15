@@ -136,7 +136,8 @@ class KugouLoginProvider(BaseLoginProvider):
                 token = data.get("token", "")
                 userid = data.get("userid", 0)
                 session.nickname = data.get("nickname", "") or data.get("username", "")
-                session.cookie = f"token={token}; userid={userid}"
+                # 字段名必须与 provider/kugou.py 的网关取流解析一致（t= / KugooID=）
+                session.cookie = f"t={token}; KugooID={userid}"
                 session.message = "酷狗登录成功！"
             else:
                 session.status = LoginStatus.FAILED

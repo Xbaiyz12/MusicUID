@@ -177,18 +177,6 @@ async def _run_for_cookie(cookie: str) -> NeteaseTaskResult:
     return NeteaseTaskResult(True, point, message, claimed, True)
 
 
-async def run_netease_daily_task() -> NeteaseTaskResult:
-    """执行一次网易云签到与云贝领取（单账号，用第一个可用凭据）。
-
-    Returns:
-        本次执行结果；网络或凭据异常时 ``ok`` 为 ``False``。
-    """
-    targets = _account_targets()
-    if not targets:
-        return NeteaseTaskResult(False, 0, "未配置网易云 Cookie", (), False)
-    return await _run_for_cookie(targets[0][1])
-
-
 async def run_all_netease_tasks() -> list[tuple[str, NeteaseTaskResult]]:
     """对账号池里的每个账号各跑一次签到与云贝领取。
 
@@ -202,7 +190,7 @@ def format_task_report(result: NeteaseTaskResult) -> str:
     """把执行结果拼成给用户看的回执。
 
     Args:
-        result: :func:`run_netease_daily_task` 的返回值。
+        result: :func:`_run_for_cookie` 的返回值。
 
     Returns:
         多行文本。
@@ -326,7 +314,12 @@ def format_multi_report(results: list[tuple[str, NeteaseTaskResult]]) -> str:
 
 
 async def auto_daily_task_job() -> None:
-    """定时执行网易云每日任务（开关关闭时直接返回）。"""
+    """定时执行网易云每日任务，并复查挂起账号。"""
+    # 复查必须排在两个 return 之前：纯 QQ/酷狗用户或关掉签到开关时也要有机会复活
+    revived = await _revive_suspended_accounts()
+    if revived:
+        logger.info(f"[MusicUID] 复查到已续费账号并重新启用：{'、'.join(revived)}")
+
     if not music_config.get_config("netease_task_enable").data:
         return
     results = await run_all_netease_tasks()
@@ -337,10 +330,6 @@ async def auto_daily_task_job() -> None:
     if failed:
         logger.warning(f"[MusicUID] 网易云每日任务部分失败：{'、'.join(failed)}")
     logger.info(f"[MusicUID] 网易云每日任务完成：{len(results)} 个账号")
-
-    revived = await _revive_suspended_accounts()
-    if revived:
-        logger.info(f"[MusicUID] 复查到已续费账号并重新启用：{'、'.join(revived)}")
 
     target = music_config.get_config("netease_task_notify").data
     if target:

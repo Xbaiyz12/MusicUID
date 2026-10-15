@@ -187,12 +187,11 @@ async def cancel_login_tasks() -> None:
 # ---------------------------------------------------------------- 凭据状态数据
 
 
-def _account_note(platform: str, fallback: str) -> str:
+def _account_note(platform: str) -> str:
     """账号池的备注行：有几个号、分别是哪些。
 
     Args:
         platform: 平台标识。
-        fallback: 账号池为空时的说明。
 
     Returns:
         一行说明文本。
@@ -201,7 +200,7 @@ def _account_note(platform: str, fallback: str) -> str:
 
     accounts = load_accounts(platform)
     if not accounts:
-        return fallback
+        return ""
     names = "、".join(item.name for item in accounts)
     return f"账号池 {len(accounts)} 个（{names}），取流时轮换"
 
@@ -219,7 +218,7 @@ def _netease_status(raw: object) -> dict[str, object]:
             "state": "ok",
             "state_text": "已绑定",
             "value": _mask_cookie(accounts[0].cookie),
-            "note": _account_note("netease", ""),
+            "note": _account_note("netease"),
         }
     if isinstance(raw, str) and raw.strip():
         return {
@@ -295,7 +294,7 @@ def _kugou_status(raw: object) -> dict[str, object]:
             "state": "ok",
             "state_text": "已绑定",
             "value": _mask_cookie(accounts[0].cookie),
-            "note": _account_note("kugou", ""),
+            "note": _account_note("kugou"),
         }
     if isinstance(raw, str) and raw.strip():
         return {
@@ -923,9 +922,7 @@ async def _save_platform_account(platform: str, name: str, cookie: str) -> tuple
             name = nick
     if not save_account(platform, name, cookie, active=active):
         return False, False
-    config_key = _cookie_config_key(platform)
-    if config_key:
-        music_config.set_config(config_key, cookie)
+    music_config.set_config(_cookie_config_key(platform), cookie)
     return True, active
 
 
@@ -1004,7 +1001,7 @@ async def handle_account_remove(bot: Bot, ev: Event) -> None:
         await bot.send("用法：点歌删号 <平台> <序号>，例如 `点歌删号 网易云 2`（序号见「点歌账号」）")
         return
     platform = resolve_platform(parts[0])
-    if platform is None:
+    if not platform:
         await bot.send("❌ 认不出平台，请写 网易云 / qq / 酷狗")
         return
     if not parts[1].isdigit():

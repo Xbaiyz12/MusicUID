@@ -56,14 +56,12 @@ class HelpSection:
         items: 组内指令。
         theme: 分组主题色，取值见 ``help.html`` 的 ``p-*`` 类
             （``search`` 紫 / ``login`` 橙 / ``link`` 绿 / ``config`` 蓝）。
-        tag: 组内条目的默认角标文案。
         tag_type: 组内条目的默认角标配色。
     """
 
     title: str
     items: tuple[HelpItem, ...]
     theme: str = "search"
-    tag: str = ""
     tag_type: str = ""
 
 
@@ -275,7 +273,7 @@ async def send_help_card(bot: Bot, sections: tuple[HelpSection, ...], fallback_t
                         {
                             "cmd": item.cmd,
                             "desc": item.desc,
-                            "tag": item.tag or section.tag,
+                            "tag": item.tag,
                             "tag_type": item.tag_type or section.tag_type,
                         }
                         for item in section.items
@@ -355,7 +353,7 @@ def split_sections(text: str) -> tuple[TextSection, ...]:
     return tuple(sections)
 
 
-async def send_text_card(bot: Bot, text: str, title: str = "MusicUID", subtitle: str = "") -> None:
+async def send_text_card(bot: Bot, text: str, title: str = "MusicUID") -> None:
     """发送文本：短的直接发，超过阈值的渲染成图片。
 
     渲染不可用或开关关闭时自动回退成纯文本，绝不让消息发不出去。
@@ -364,7 +362,6 @@ async def send_text_card(bot: Bot, text: str, title: str = "MusicUID", subtitle:
         bot: Bot wrapper bound to the current event.
         text: 要发送的文本。
         title: 卡片标题。
-        subtitle: 卡片副标题。
     """
     if len(text) <= LONG_TEXT_THRESHOLD or not music_config.get_config("render_card").data:
         await bot.send(text)
@@ -375,7 +372,6 @@ async def send_text_card(bot: Bot, text: str, title: str = "MusicUID", subtitle:
         return
     data: dict[str, object] = {
         "title": title,
-        "subtitle": subtitle,
         "sections": [{"heading": section.heading, "lines": list(section.lines)} for section in sections],
     }
     png = await render_card(TEXT_TEMPLATE, data)

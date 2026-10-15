@@ -1261,12 +1261,10 @@ def test_netease_task_requires_cookie(monkeypatch: pytest.MonkeyPatch) -> None:
     from MusicUID.MusicUID import musicuid_tasks
     from MusicUID.MusicUID.musicuid_config import music_config
 
-    # 没配 Cookie 时必须短路返回，绝不能发网络请求
+    # 没配 Cookie 时不该有任何账号目标，也就不会发出网络请求
     monkeypatch.setattr(music_config, "get_config", lambda name: SimpleNamespace(data=""))
-    result = asyncio.run(musicuid_tasks.run_netease_daily_task())
-    assert result.ok is False
-    assert result.claimed == ()
-    assert "未配置" in result.sign_message
+    assert musicuid_tasks._account_targets() == []
+    assert asyncio.run(musicuid_tasks.run_all_netease_tasks()) == []
 
 
 def test_notify_target_parsing() -> None:
@@ -1406,3 +1404,34 @@ def test_vip_check_reports_no_conclusion(monkeypatch: pytest.MonkeyPatch) -> Non
 
     # 没有凭据时同样只是「没结论」，不能被当成无 VIP
     assert asyncio.run(vip.check_netease_vip("")) == (False, "", False)
+
+
+def test_qq_account_key_accepts_web_cookie(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """QQ 入池的是网页 Cookie，去重键必须认 uin —— 否则写入端会静默全部失败。"""
+    from MusicUID.MusicUID.utils import accounts
+
+    monkeypatch.setattr(accounts, "ACCOUNTS_PATH", tmp_path / "accounts.json")
+    monkeypatch.setattr(accounts, "LEGACY_NETEASE_PATH", tmp_path / "legacy.json")
+    assert accounts.save_account("qq", "主号", "uin=123456; qm_keyst=abc") is True
+    loaded = accounts.load_accounts("qq")
+    assert len(loaded) == 1
+    assert accounts.account_key("qq", loaded[0].cookie) == "123456"
+
+    # 同一个 uin 再存一次只更新备注名，不新增条目
+    assert accounts.save_account("qq", "改名", "uin=123456; qm_keyst=newer") is True
+    renamed = accounts.load_accounts("qq")
+    assert len(renamed) == 1
+    assert renamed[0].name == "改名"
+
+
+def test_kugou_gateway_parses_scanned_cookie_format() -> None:
+    """酷狗扫码写出的字段名必须能被网关取流解析（t= / KugooID=）。"""
+    import re
+
+    # 与 utils/login/kugou.py 扫码成功时写出的形态保持一致
+    scanned = "t=TOKEN123; KugooID=2039242825"
+    assert re.search(r"(?:^|;\s*)t=([^;]*)", scanned)
+    assert re.search(r"(?:^|;\s*)KugooID=([^;]*)", scanned)
+    # 旧写法（token= / userid=）解析不出来，所以那个形态是被修掉的 bug
+    broken = "token=TOKEN123; userid=2039242825"
+    assert re.search(r"(?:^|;\s*)t=([^;]*)", broken) is None

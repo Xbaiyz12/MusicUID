@@ -298,8 +298,9 @@ class NeteaseProvider:
                 try:
                     data = await post_json(WEAPI_PLAY_URL, weapi_form(payload), headers=headers)
                 except MusicRequestError as e:
-                    logger.debug(f"[MusicUID] weapi 取流失败（{level}）：{e}")
-                    break
+                    # 传输错误跟账号无关：不记失败，继续试下一档
+                    logger.debug(f"[MusicUID] weapi 取流请求失败（{level}）：{e}")
+                    continue
                 for raw in get_list(to_obj(data), "data"):
                     url = get_str(to_obj(raw), "url")
                     if url:
@@ -311,6 +312,6 @@ class NeteaseProvider:
                 reset_failure("netease", cookie)
                 logger.debug(f"[MusicUID] weapi 命中 {level}：{song.name}")
                 return hit
-            # 这个号取不到就记一次失败，连续失败够数会被挂起，不再拖累后续点歌
+            # 各档请求都成功却没下发直链，才算这个号的问题
             record_failure("netease", cookie)
         return ""

@@ -34,11 +34,11 @@ REFRESH_COOLDOWN_SEC: Final[float] = 300.0
 _last_refresh_at: float = 0.0
 
 
-async def _ensure_active_cookie() -> str:
-    """取一个可用的 QQ 音乐 Cookie，并顺带巡检移动端凭据。
+async def _refresh_if_needed() -> None:
+    """巡检移动端凭据，临近过期就静默续签。
 
-    多账号时按轮换取号，分摊单号的请求频率；续期仍走移动端凭据，
-    且带冷却窗口，命中 104003 之前不会在同一次点歌里反复刷新。
+    带冷却窗口，命中 104003 之前不会在同一次点歌里反复刷新。这里刻意不取号：
+    调用方自己会取号，否则一次取流会推进两次轮询游标、破坏轮换公平。
     """
     global _last_refresh_at
     for cred in load_qq_credentials():
@@ -48,11 +48,20 @@ async def _ensure_active_cookie() -> str:
         if now - _last_refresh_at < REFRESH_COOLDOWN_SEC:
             break
         _last_refresh_at = now
-        logger.info("[MusicUID] QQ 音乐移动凭据临近过期，取流前自动触发静默续签...")
+        logger.info("[MusicUID] QQ 音乐移动凭据临近过期，自动触发静默续签...")
         ok, msg = await refresh_qq_credential(cred)
         if not ok:
             logger.warning(f"[MusicUID] QQ 音乐凭据静默续签失败：{msg}，本次仍按现有 Cookie 取流")
         break
+
+
+async def _ensure_active_cookie() -> str:
+    """取一个可用的 QQ 音乐 Cookie 并巡检凭据，供搜索等单号路径使用。
+
+    Returns:
+        可直接放进请求头的 Cookie 串，没有可用账号时为空串。
+    """
+    await _refresh_if_needed()
     cookies = iter_cookies("qq", limit=1)
     return cookies[0] if cookies else ""
 
@@ -224,8 +233,8 @@ class QqMusicProvider:
         Raises:
             MusicRequestError: The platform request failed.
         """
-        # 取流前顺带巡检一次凭据有效期（内部有冷却窗口，不会每次都发请求）
-        await _ensure_active_cookie()
+        # 取流前顺带巡检一次凭据有效期（不取号，避免多推一次轮询游标）
+        await _refresh_if_needed()
         priority = music_config.get_config("custom_api_priority").data
         if priority == "custom_first":
             custom_res = await resolve_custom_api(song)

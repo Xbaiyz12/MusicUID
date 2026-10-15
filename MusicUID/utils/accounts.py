@@ -91,14 +91,20 @@ def music_u_of(cookie: str) -> str:
 
 
 def _qq_account_key(cookie: str) -> str:
-    """QQ 音乐凭据是 JSON 串，按 musicid / uin / nick 去重。
+    """取 QQ 音乐账号的唯一标识。
+
+    账号池里存的是网页 Cookie（``uin=...; qm_keyst=...``），而扫码得到的移动端
+    凭据是另一种 JSON 形态；两种都认，否则写入端与去重端对不上会导致存不进去。
 
     Args:
-        cookie: JSON 序列化的凭据。
+        cookie: Cookie 串或 JSON 凭据。
 
     Returns:
-        唯一标识，解析失败时返回空串。
+        唯一标识，取不到时返回空串。
     """
+    uin = cookie_value_of(cookie, "uin")
+    if uin:
+        return uin
     try:
         raw = json.loads(cookie)
     except ValueError:
