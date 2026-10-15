@@ -334,8 +334,34 @@ def remove_account(platform: str, index: int) -> str:
     return removed.name
 
 
+def iter_cookies(platform: str, limit: int = 3) -> list[str]:
+    """按轮询起点列出可用账号的 Cookie，供取流失败时逐个重试。
+
+    某个号 Cookie 失效时换下一个继续试，避免一个坏号让整次点歌失败。
+    账号池为空或全部挂起时，回退到该平台的配置项。
+
+    Args:
+        platform: 平台标识。
+        limit: 最多返回几个；池子很大时避免把一次点歌拖太久。
+
+    Returns:
+        Cookie 列表，可能为空。
+    """
+    accounts = [item for item in load_accounts(platform) if item.active]
+    if not accounts:
+        config_key = _CONFIG_KEYS.get(platform, "")
+        if not config_key:
+            return []
+        fallback = normalize_cookie(platform, music_config.get_config(config_key).data)
+        return [fallback] if fallback else []
+    start = _cursor.get(platform, 0) % len(accounts)
+    _cursor[platform] = (start + 1) % len(accounts)
+    ordered = accounts[start:] + accounts[:start]
+    return [normalize_cookie(platform, item.cookie) for item in ordered[:limit]]
+
+
 def pick_cookie(platform: str) -> str:
-    """按轮询取某平台一个「已启用」账号的 Cookie，用于取流。
+    """按轮询取某平台一个「已启用」账号的 Cookie。
 
     账号池为空或全部挂起时回退到该平台的配置项，保证单账号用户可用。
 
@@ -345,12 +371,5 @@ def pick_cookie(platform: str) -> str:
     Returns:
         可直接放进请求头的 Cookie 串，没有可用账号时为空串。
     """
-    accounts = [item for item in load_accounts(platform) if item.active]
-    if not accounts:
-        config_key = _CONFIG_KEYS.get(platform, "")
-        if not config_key:
-            return ""
-        return normalize_cookie(platform, music_config.get_config(config_key).data)
-    index = _cursor.get(platform, 0) % len(accounts)
-    _cursor[platform] = (index + 1) % len(accounts)
-    return normalize_cookie(platform, accounts[index].cookie)
+    cookies = iter_cookies(platform, limit=1)
+    return cookies[0] if cookies else ""

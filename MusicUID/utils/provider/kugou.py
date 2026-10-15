@@ -10,7 +10,7 @@ from gsuid_core.logger import logger
 
 from .base import SongInfo, SongCollection
 from ..http import get_json
-from ..accounts import pick_cookie
+from ..accounts import iter_cookies
 from .custom_api import resolve_custom_api
 from ..json_tools import to_obj, get_int, get_obj, get_str, get_list
 
@@ -166,9 +166,8 @@ class KugouProvider:
         Raises:
             MusicRequestError: The platform request failed.
         """
-        # 多账号时轮换取号，分摊单号的请求频率
-        cookie = pick_cookie("kugou")
-        if cookie:
+        # 逐号重试：某个号失效就换下一个，全部失败再退回免登录链路
+        for cookie in iter_cookies("kugou"):
             url = await self._logged_play_url(song, cookie)
             if url:
                 return url

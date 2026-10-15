@@ -275,34 +275,39 @@ class NeteaseProvider:
         try:
             from Crypto.Cipher import AES  # noqa: F401
 
-            from ..accounts import pick_cookie
+            from ..accounts import iter_cookies
             from .netease_crypto import weapi_form
         except ImportError as e:
             logger.debug(f"[MusicUID] weapi 不可用（缺 pycryptodome）：{e}")
             return ""
         headers = dict(HEADERS)
-        # 多账号时轮换取号，分摊单号的请求频率
-        cookie = pick_cookie("netease")
-        if cookie:
-            headers["Cookie"] = cookie
         preferred = music_config.get_config("netease_level").data
         # 优先用户选的档位，拿不到再落到标准档
         levels = (preferred, "standard") if preferred in QUALITY_LEVELS and preferred != "standard" else ("standard",)
-        for level in levels:
-            payload: dict[str, object] = {
-                "ids": f"[{song.song_id}]",
-                "level": level,
-                "encodeType": "mp3",
-                "csrf_token": "",
-            }
-            try:
-                data = await post_json(WEAPI_PLAY_URL, weapi_form(payload), headers=headers)
-            except (MusicRequestError, ImportError, ValueError, Exception) as e:
-                logger.debug(f"[MusicUID] weapi 取流失败（{level}）：{e}")
-                continue
-            for raw in get_list(to_obj(data), "data"):
-                url = get_str(to_obj(raw), "url")
-                if url:
-                    logger.debug(f"[MusicUID] weapi 命中 {level}：{song.name}")
-                    return url
+        # 逐号重试：某个号失效/无权限就换下一个，别让一个坏号毁掉整次点歌
+        for cookie in iter_cookies("netease"):
+            headers["Cookie"] = cookie
+            hit = ""
+            for level in levels:
+                payload: dict[str, object] = {
+                    "ids": f"[{song.song_id}]",
+                    "level": level,
+                    "encodeType": "mp3",
+                    "csrf_token": "",
+                }
+                try:
+                    data = await post_json(WEAPI_PLAY_URL, weapi_form(payload), headers=headers)
+                except MusicRequestError as e:
+                    logger.debug(f"[MusicUID] weapi 取流失败（{level}）：{e}")
+                    break
+                for raw in get_list(to_obj(data), "data"):
+                    url = get_str(to_obj(raw), "url")
+                    if url:
+                        hit = url
+                        break
+                if hit:
+                    break
+            if hit:
+                logger.debug(f"[MusicUID] weapi 命中 {level}：{song.name}")
+                return hit
         return ""

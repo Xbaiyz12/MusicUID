@@ -8,7 +8,7 @@ from gsuid_core.logger import logger
 
 from .base import SongInfo, SongCollection
 from ..http import get_json, post_json
-from ..accounts import pick_cookie
+from ..accounts import iter_cookies
 from .custom_api import resolve_custom_api
 from ..json_tools import to_obj, get_int, get_obj, get_str, get_list, join_names
 from ..login.qqmusic import load_qq_credentials, refresh_qq_credential, is_credential_expiring
@@ -53,7 +53,8 @@ async def _ensure_active_cookie() -> str:
         if not ok:
             logger.warning(f"[MusicUID] QQ 音乐凭据静默续签失败：{msg}，本次仍按现有 Cookie 取流")
         break
-    return pick_cookie("qq")
+    cookies = iter_cookies("qq", limit=1)
+    return cookies[0] if cookies else ""
 
 
 async def _cookie_headers() -> dict[str, str]:
@@ -223,52 +224,57 @@ class QqMusicProvider:
         Raises:
             MusicRequestError: The platform request failed.
         """
+        # 取流前顺带巡检一次凭据有效期（内部有冷却窗口，不会每次都发请求）
+        await _ensure_active_cookie()
         priority = music_config.get_config("custom_api_priority").data
         if priority == "custom_first":
             custom_res = await resolve_custom_api(song)
             if custom_res:
                 return custom_res
 
-        headers = await _cookie_headers()
-        cookie = headers.get("Cookie", "")
-        uin = "0"
-        if cookie:
-            match = re.search(r"(?:^|;\s*)uin=([^;]*)", cookie)
-            if match:
-                uin = match.group(1)
-            else:
-                logger.warning("[MusicUID] QQ音乐 Cookie 缺少 uin 字段，已按匿名取流")
-        for prefix, suffix in QUALITY_TIERS:
-            payload = await post_json(
-                VKEY_URL,
-                {
-                    "req_1": {
-                        "module": "vkey.GetVkeyServer",
-                        "method": "CgiGetVkey",
-                        "param": {
-                            "filename": [f"{prefix}{song.song_id}{song.song_id}.{suffix}"],
-                            "guid": "10000",
-                            "songmid": [song.song_id],
-                            "songtype": [0],
-                            "uin": uin,
-                            "loginflag": 1,
-                            "platform": "20",
+        # 逐号重试：某个号失效或缺少权限就换下一个，全部试完再走兜底
+        # 没有可用账号时也走一次匿名请求（uin=0），保留无 Cookie 时的原行为
+        for raw_cookie in iter_cookies("qq") or [""]:
+            headers = dict(HEADERS)
+            uin = "0"
+            if raw_cookie:
+                headers["Cookie"] = raw_cookie
+                match = re.search(r"(?:^|;\s*)uin=([^;]*)", raw_cookie)
+                if match:
+                    uin = match.group(1)
+                else:
+                    logger.warning("[MusicUID] QQ音乐 Cookie 缺少 uin 字段，已按匿名取流")
+            for prefix, suffix in QUALITY_TIERS:
+                payload = await post_json(
+                    VKEY_URL,
+                    {
+                        "req_1": {
+                            "module": "vkey.GetVkeyServer",
+                            "method": "CgiGetVkey",
+                            "param": {
+                                "filename": [f"{prefix}{song.song_id}{song.song_id}.{suffix}"],
+                                "guid": "10000",
+                                "songmid": [song.song_id],
+                                "songtype": [0],
+                                "uin": uin,
+                                "loginflag": 1,
+                                "platform": "20",
+                            },
                         },
+                        "loginUin": uin,
+                        "comm": {"uin": uin, "format": "json", "ct": 24, "cv": 0},
                     },
-                    "loginUin": uin,
-                    "comm": {"uin": uin, "format": "json", "ct": 24, "cv": 0},
-                },
-                headers=headers,
-                as_json=True,
-            )
-            data = get_obj(get_obj(to_obj(payload), "req_1"), "data")
-            infos = [to_obj(item) for item in get_list(data, "midurlinfo")]
-            purl = get_str(infos[0], "purl") if infos else ""
-            hosts = [item for item in get_list(data, "sip") if isinstance(item, str) and item]
-            if purl and hosts:
-                return f"{hosts[0]}{purl}"
-            result = get_int(infos[0], "result") if infos else "none"
-            logger.debug(f"[MusicUID] QQ音乐 {suffix} 档未下发 {song.name}：result={result}")
+                    headers=headers,
+                    as_json=True,
+                )
+                data = get_obj(get_obj(to_obj(payload), "req_1"), "data")
+                infos = [to_obj(item) for item in get_list(data, "midurlinfo")]
+                purl = get_str(infos[0], "purl") if infos else ""
+                hosts = [item for item in get_list(data, "sip") if isinstance(item, str) and item]
+                if purl and hosts:
+                    return f"{hosts[0]}{purl}"
+                result = get_int(infos[0], "result") if infos else "none"
+                logger.debug(f"[MusicUID] QQ音乐 {suffix} 档未下发 {song.name}：result={result}")
 
         # 官方接口未下发有效直链（如 VIP 受限或无权播放）时，自动触发自建微服务兜底
         if priority != "custom_first":

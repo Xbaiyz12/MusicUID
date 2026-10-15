@@ -59,11 +59,13 @@ def _clean_sessions():
 
 @pytest.fixture(autouse=True)
 def _isolate_accounts(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    """账号池指向临时文件：测试绝不能读写真实凭据，更不能因此发真请求。"""
+    """凭据一律指向临时文件：测试绝不能读写真实账号，更不能因此发真请求。"""
     from MusicUID.MusicUID.utils import accounts
+    from MusicUID.MusicUID.utils.login import qqmusic as qq_login
 
     monkeypatch.setattr(accounts, "ACCOUNTS_PATH", tmp_path / "accounts.json")
     monkeypatch.setattr(accounts, "LEGACY_NETEASE_PATH", tmp_path / "legacy_netease.json")
+    monkeypatch.setattr(qq_login, "QQ_CREDENTIAL_PATH", tmp_path / "qqmusic_credential.json")
     yield
 
 
@@ -138,7 +140,7 @@ def test_kugou_play_url_signs_lowercased_hash(monkeypatch: pytest.MonkeyPatch) -
         return {"status": 1, "url": ["http://fsandroid.example/song.mp3"]}
 
     monkeypatch.setattr(kugou_module, "get_json", fake_get_json)
-    monkeypatch.setattr(kugou_module, "pick_cookie", lambda platform: "")
+    monkeypatch.setattr(kugou_module, "iter_cookies", lambda platform, limit=3: [])
     song = SongInfo(platform="kugou", song_id="3801C2F0", name="晴天", singers="周杰伦")
     assert asyncio.run(kugou_module.KugouProvider().play_url(song)) == "http://fsandroid.example/song.mp3"
     assert captured["url"] == kugou_module.CDN_URL
@@ -153,7 +155,7 @@ def test_kugou_play_url_returns_empty_when_cdn_refuses(monkeypatch: pytest.Monke
         return {"status": 2, "url": []}
 
     monkeypatch.setattr(kugou_module, "get_json", fake_get_json)
-    monkeypatch.setattr(kugou_module, "pick_cookie", lambda platform: "")
+    monkeypatch.setattr(kugou_module, "iter_cookies", lambda platform, limit=3: [])
     song = SongInfo(platform="kugou", song_id="HASH", name="n", singers="s")
     assert asyncio.run(kugou_module.KugouProvider().play_url(song)) == ""
 
@@ -168,7 +170,7 @@ def test_kugou_play_url_uses_gateway_with_cookie(monkeypatch: pytest.MonkeyPatch
 
     cookie = "kg_mid=abc; t=TOKEN123; KugooID=2039242825; dfid=xyz"
     monkeypatch.setattr(kugou_module, "get_json", fake_get_json)
-    monkeypatch.setattr(kugou_module, "pick_cookie", lambda platform: cookie)
+    monkeypatch.setattr(kugou_module, "iter_cookies", lambda platform, limit=3: [cookie])
     song = SongInfo(platform="kugou", song_id="ABC123", name="晴天", singers="周杰伦")
     assert asyncio.run(kugou_module.KugouProvider().play_url(song)) == "http://fsandroid.example/vip.mp3"
     assert calls[0]["url"] == kugou_module.GATEWAY_URL
@@ -203,7 +205,7 @@ def test_kugou_play_url_skips_gateway_when_cookie_incomplete(monkeypatch: pytest
         return {"status": 1, "url": ["http://cdn.example/free.mp3"]}
 
     monkeypatch.setattr(kugou_module, "get_json", fake_get_json)
-    monkeypatch.setattr(kugou_module, "pick_cookie", lambda platform: "kg_mid=abc; dfid=xyz")
+    monkeypatch.setattr(kugou_module, "iter_cookies", lambda platform, limit=3: ["kg_mid=abc; dfid=xyz"])
     song = SongInfo(platform="kugou", song_id="HASH", name="n", singers="s")
     assert asyncio.run(kugou_module.KugouProvider().play_url(song)) == "http://cdn.example/free.mp3"
     assert urls == [kugou_module.CDN_URL]
@@ -220,7 +222,7 @@ def test_kugou_play_url_falls_back_when_gateway_refuses(monkeypatch: pytest.Monk
         return {"status": 1, "url": ["http://cdn.example/free.mp3"]}
 
     monkeypatch.setattr(kugou_module, "get_json", fake_get_json)
-    monkeypatch.setattr(kugou_module, "pick_cookie", lambda platform: "t=TOKEN; KugooID=123")
+    monkeypatch.setattr(kugou_module, "iter_cookies", lambda platform, limit=3: ["t=TOKEN; KugooID=123"])
     song = SongInfo(platform="kugou", song_id="HASH", name="n", singers="s")
     assert asyncio.run(kugou_module.KugouProvider().play_url(song)) == "http://cdn.example/free.mp3"
     assert urls == [kugou_module.GATEWAY_URL, kugou_module.CDN_URL]
