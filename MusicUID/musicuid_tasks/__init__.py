@@ -152,7 +152,7 @@ def _account_targets() -> list[tuple[str, str]]:
     """
     from ..utils.accounts import load_accounts
 
-    accounts = load_accounts()
+    accounts = load_accounts("netease")
     if accounts:
         return [(item.name, weapi_cookie(item.cookie)) for item in accounts]
     fallback = weapi_cookie(music_config.get_config("netease_cookie").data)

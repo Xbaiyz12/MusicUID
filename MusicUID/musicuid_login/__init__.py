@@ -624,7 +624,7 @@ async def handle_set_cookie(bot: Bot, ev: Event) -> None:
             return
         music_config.set_config("netease_cookie", cookie_to_save)
         # 手动导入的号也入账号池，才能参与轮换取流
-        _save_netease_account("", cookie_to_save)
+        _save_platform_account("netease", "", cookie_to_save)
         logger.info("[MusicUID] 已成功更新网易云音乐 Cookie")
         await bot.send(f"✅ 已成功更新【网易云音乐】Cookie 凭据！\n已生效凭证：\n{_mask_cookie(cookie_to_save)}")
         return
@@ -637,6 +637,8 @@ async def handle_set_cookie(bot: Bot, ev: Event) -> None:
             )
             return
         music_config.set_config("kugou_cookie", raw_text)
+        # 手动导入的号也入账号池，才能参与轮换取流
+        _save_platform_account("kugou", "", raw_text)
         logger.info("[MusicUID] 已成功更新酷狗音乐 Cookie")
         await bot.send("✅ 已成功更新【酷狗音乐】Cookie 凭据！")
         return
@@ -797,9 +799,9 @@ async def _poll_login_status(
                 await bot.send(f"⚠️【{provider.display_name}】登录成功，但凭据写入失败，请检查插件配置后重试")
                 return
             logger.info(f"[MusicUID] {provider.display_name} 扫码登录成功，凭证已保存")
-            # 网易云的扫码结果同时入账号池，多号轮换取流才有意义
-            if provider.platform_name == "netease":
-                _save_netease_account(session.nickname or "", session.cookie)
+            # 网易云与酷狗的扫码结果都入账号池，多号轮换取流才有意义
+            if provider.platform_name in ("netease", "kugou"):
+                _save_platform_account(provider.platform_name, session.nickname or "", session.cookie)
             success_tip = (
                 f"🎉【{provider.display_name}】扫码登录成功！\n"
                 f"• 用户: {session.nickname or '已登录'}\n"
@@ -825,23 +827,24 @@ async def _poll_login_status(
 # ------------------------------------------------- 网易云验证码登录与账号池
 
 
-def _save_netease_account(name: str, cookie: str) -> bool:
-    """把网易云凭据存进账号池，并同步一份到配置项保持兼容。
+def _save_platform_account(platform: str, name: str, cookie: str) -> bool:
+    """把某平台凭据存进账号池，并同步一份到配置项保持兼容。
 
     Args:
+        platform: 平台标识。
         name: 账号备注名，留空则自动编号。
         cookie: 登录返回的 Cookie 串。
 
     Returns:
         是否保存成功。
     """
-    from ..utils.accounts import music_u_of, save_account
+    from ..utils.accounts import save_account
 
-    if not save_account(name, cookie):
+    if not save_account(platform, name, cookie):
         return False
-    music_u = music_u_of(cookie)
-    if music_u:
-        music_config.set_config("netease_cookie", music_u)
+    config_key = _cookie_config_key(platform)
+    if config_key:
+        music_config.set_config(config_key, cookie)
     return True
 
 
@@ -873,28 +876,27 @@ async def handle_captcha_login(bot: Bot, ev: Event) -> None:
         return
     _captcha_phone.pop(ev.user_id, None)
     name = session.nickname or phone
-    if not _save_netease_account(name, session.cookie):
+    if not _save_platform_account("netease", name, session.cookie):
         await bot.send("❌ 登录成功但凭据保存失败，请查看日志。")
         return
     await bot.send(f"🎉【网易云音乐】验证码登录成功！\n• 账号：{name}\n• 已加入账号池，点歌时会与其它账号轮换使用")
 
 
-@sv_login.on_fullmatch(("网易云账号", "点歌账号"), block=True, to_ai="查看已登录的网易云账号池")
+@sv_login.on_fullmatch(("网易云账号", "酷狗账号", "点歌账号"), block=True, to_ai="查看已登录的音乐账号池")
 async def handle_account_list(bot: Bot, ev: Event) -> None:
-    """列出账号池里的网易云账号。"""
+    """列出账号池里的音乐账号。"""
     from ..utils.accounts import load_accounts
 
-    accounts = load_accounts()
-    if not accounts:
-        await bot.send(
-            "📭 账号池为空，当前只用配置项里的那一个网易云账号。\n\n"
-            "➕ 添加账号：\n"
-            "• 「网易云登录」扫码添加\n"
-            "• 「网易云登录 <手机号>」用短信验证码添加"
+    sections: list[str] = []
+    for platform, title in (("netease", "网易云音乐"), ("kugou", "酷狗音乐")):
+        accounts = load_accounts(platform)
+        if not accounts:
+            sections.append(f"📭【{title}】未加号，当前用配置项里的那一个")
+            continue
+        lines = [f"🎵【{title}】共 {len(accounts)} 个，取流时按顺序轮换："]
+        lines.extend(
+            f"  {index}. {item.name}（{_mask_cookie(item.cookie)}）" for index, item in enumerate(accounts, start=1)
         )
-        return
-    lines = [f"🎵【网易云账号池】共 {len(accounts)} 个，取流时按顺序轮换：", ""]
-    lines.extend(f"{index}. {item.name}（{_mask_cookie(item.cookie)}）" for index, item in enumerate(accounts, start=1))
-    lines.append("")
-    lines.append("➕ 继续添加：「网易云登录」（扫码）或「网易云登录 <手机号>」（验证码）")
-    await bot.send("\n".join(lines))
+        sections.append("\n".join(lines))
+    sections.append("➕ 加号：「网易云登录」/「酷狗登录」扫码，或「网易云登录 <手机号>」验证码")
+    await bot.send("\n\n".join(sections))

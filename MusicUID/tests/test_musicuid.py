@@ -128,7 +128,7 @@ def test_kugou_play_url_signs_lowercased_hash(monkeypatch: pytest.MonkeyPatch) -
         return {"status": 1, "url": ["http://fsandroid.example/song.mp3"]}
 
     monkeypatch.setattr(kugou_module, "get_json", fake_get_json)
-    monkeypatch.setattr(kugou_module.music_config, "get_config", lambda name: SimpleNamespace(data=""))
+    monkeypatch.setattr(kugou_module, "pick_cookie", lambda platform: "")
     song = SongInfo(platform="kugou", song_id="3801C2F0", name="晴天", singers="周杰伦")
     assert asyncio.run(kugou_module.KugouProvider().play_url(song)) == "http://fsandroid.example/song.mp3"
     assert captured["url"] == kugou_module.CDN_URL
@@ -143,7 +143,7 @@ def test_kugou_play_url_returns_empty_when_cdn_refuses(monkeypatch: pytest.Monke
         return {"status": 2, "url": []}
 
     monkeypatch.setattr(kugou_module, "get_json", fake_get_json)
-    monkeypatch.setattr(kugou_module.music_config, "get_config", lambda name: SimpleNamespace(data=""))
+    monkeypatch.setattr(kugou_module, "pick_cookie", lambda platform: "")
     song = SongInfo(platform="kugou", song_id="HASH", name="n", singers="s")
     assert asyncio.run(kugou_module.KugouProvider().play_url(song)) == ""
 
@@ -158,7 +158,7 @@ def test_kugou_play_url_uses_gateway_with_cookie(monkeypatch: pytest.MonkeyPatch
 
     cookie = "kg_mid=abc; t=TOKEN123; KugooID=2039242825; dfid=xyz"
     monkeypatch.setattr(kugou_module, "get_json", fake_get_json)
-    monkeypatch.setattr(kugou_module.music_config, "get_config", lambda name: SimpleNamespace(data=cookie))
+    monkeypatch.setattr(kugou_module, "pick_cookie", lambda platform: cookie)
     song = SongInfo(platform="kugou", song_id="ABC123", name="晴天", singers="周杰伦")
     assert asyncio.run(kugou_module.KugouProvider().play_url(song)) == "http://fsandroid.example/vip.mp3"
     assert calls[0]["url"] == kugou_module.GATEWAY_URL
@@ -193,9 +193,7 @@ def test_kugou_play_url_skips_gateway_when_cookie_incomplete(monkeypatch: pytest
         return {"status": 1, "url": ["http://cdn.example/free.mp3"]}
 
     monkeypatch.setattr(kugou_module, "get_json", fake_get_json)
-    monkeypatch.setattr(
-        kugou_module.music_config, "get_config", lambda name: SimpleNamespace(data="kg_mid=abc; dfid=xyz")
-    )
+    monkeypatch.setattr(kugou_module, "pick_cookie", lambda platform: "kg_mid=abc; dfid=xyz")
     song = SongInfo(platform="kugou", song_id="HASH", name="n", singers="s")
     assert asyncio.run(kugou_module.KugouProvider().play_url(song)) == "http://cdn.example/free.mp3"
     assert urls == [kugou_module.CDN_URL]
@@ -212,9 +210,7 @@ def test_kugou_play_url_falls_back_when_gateway_refuses(monkeypatch: pytest.Monk
         return {"status": 1, "url": ["http://cdn.example/free.mp3"]}
 
     monkeypatch.setattr(kugou_module, "get_json", fake_get_json)
-    monkeypatch.setattr(
-        kugou_module.music_config, "get_config", lambda name: SimpleNamespace(data="t=TOKEN; KugooID=123")
-    )
+    monkeypatch.setattr(kugou_module, "pick_cookie", lambda platform: "t=TOKEN; KugooID=123")
     song = SongInfo(platform="kugou", song_id="HASH", name="n", singers="s")
     assert asyncio.run(kugou_module.KugouProvider().play_url(song)) == "http://cdn.example/free.mp3"
     assert urls == [kugou_module.GATEWAY_URL, kugou_module.CDN_URL]
@@ -1256,28 +1252,37 @@ def test_accounts_pool_roundtrip(tmp_path: pytest.TempPathFactory, monkeypatch: 
     from MusicUID.MusicUID.utils import accounts
 
     monkeypatch.setattr(accounts, "ACCOUNTS_PATH", tmp_path / "accounts.json")
-    assert accounts.load_accounts() == []
+    assert accounts.load_accounts("netease") == []
 
-    assert accounts.save_account("主号", "MUSIC_U=abc; os=pc") is True
-    assert accounts.save_account("小号", "def") is True
-    assert [item.name for item in accounts.load_accounts()] == ["主号", "小号"]
+    assert accounts.save_account("netease", "主号", "MUSIC_U=abc; os=pc") is True
+    assert accounts.save_account("netease", "小号", "def") is True
+    assert [item.name for item in accounts.load_accounts("netease")] == ["主号", "小号"]
+
+    # 平台之间互不干扰；酷狗按 KugooID 去重（kg_mid 是设备号，不同设备会变）
+    assert accounts.save_account("kugou", "酷狗主号", "KugooID=2039242825; kg_mid=xyz") is True
+    assert len(accounts.load_accounts("kugou")) == 1
+    assert len(accounts.load_accounts("netease")) == 2
+    assert accounts.save_account("kugou", "酷狗改名", "KugooID=2039242825; token=newer") is True
+    kugou = accounts.load_accounts("kugou")
+    assert len(kugou) == 1
+    assert kugou[0].name == "酷狗改名"
 
     # 同一个 MUSIC_U 再存一次只更新备注名，不新增条目
-    assert accounts.save_account("主号改名", "abc") is True
-    loaded = accounts.load_accounts()
+    assert accounts.save_account("netease", "主号改名", "abc") is True
+    loaded = accounts.load_accounts("netease")
     assert len(loaded) == 2
     assert {item.name for item in loaded} == {"主号改名", "小号"}
     # 落盘的 Cookie 只保留 MUSIC_U
     renamed = [item for item in loaded if item.name == "主号改名"]
-    assert renamed[0].cookie == "MUSIC_U=abc"
+    assert renamed[0].cookie == "MUSIC_U=abc; os=pc"
 
     # 删除按序号，但保存顺序不保证，所以只校验数量与合法性
-    assert accounts.remove_account(1) in {"主号改名", "小号"}
-    assert len(accounts.load_accounts()) == 1
-    assert accounts.remove_account(9) == ""
+    assert accounts.remove_account("netease", 1) in {"主号改名", "小号"}
+    assert len(accounts.load_accounts("netease")) == 1
+    assert accounts.remove_account("netease", 9) == ""
 
     # 账号池非空时轮询取号；只剩一个号时每次都取它
-    assert accounts.pick_cookie().startswith("MUSIC_U=")
+    assert accounts.pick_cookie("netease").startswith("MUSIC_U=")
 
 
 def test_pick_cookie_falls_back_to_config(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1285,6 +1290,8 @@ def test_pick_cookie_falls_back_to_config(monkeypatch: pytest.MonkeyPatch) -> No
     from MusicUID.MusicUID.musicuid_config import music_config
 
     # 账号池为空时必须回退配置项，单账号用户不受影响
-    monkeypatch.setattr(accounts, "load_accounts", lambda: [])
+    monkeypatch.setattr(accounts, "load_accounts", lambda platform: [])
     monkeypatch.setattr(music_config, "get_config", lambda name: SimpleNamespace(data="fallback_u"))
-    assert accounts.pick_cookie() == "MUSIC_U=fallback_u; os=pc"
+    assert accounts.pick_cookie("netease") == "MUSIC_U=fallback_u; os=pc"
+    # 酷狗不做 MUSIC_U / os=pc 之类的改写
+    assert accounts.pick_cookie("kugou") == "fallback_u"

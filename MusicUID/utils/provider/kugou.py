@@ -10,9 +10,9 @@ from gsuid_core.logger import logger
 
 from .base import SongInfo, SongCollection
 from ..http import get_json
+from ..accounts import pick_cookie
 from .custom_api import resolve_custom_api
 from ..json_tools import to_obj, get_int, get_obj, get_str, get_list
-from ...musicuid_config import music_config
 
 # 仅 mobiles.kugou.com 的证书与域名匹配，mobilecdn / msearchcdn 均报 Hostname mismatch
 SEARCH_URL: Final[str] = "https://mobiles.kugou.com/api/v3/search/song"
@@ -166,7 +166,8 @@ class KugouProvider:
         Raises:
             MusicRequestError: The platform request failed.
         """
-        cookie = music_config.get_config("kugou_cookie").data
+        # 多账号时轮换取号，分摊单号的请求频率
+        cookie = pick_cookie("kugou")
         if cookie:
             url = await self._logged_play_url(song, cookie)
             if url:

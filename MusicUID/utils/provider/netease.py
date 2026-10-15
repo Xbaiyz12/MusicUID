@@ -282,7 +282,7 @@ class NeteaseProvider:
             return ""
         headers = dict(HEADERS)
         # 多账号时轮换取号，分摊单号的请求频率
-        cookie = pick_cookie()
+        cookie = pick_cookie("netease")
         if cookie:
             headers["Cookie"] = cookie
         preferred = music_config.get_config("netease_level").data
