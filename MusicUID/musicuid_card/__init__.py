@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import base64
 import asyncio
 from dataclasses import field, dataclass
@@ -19,6 +20,9 @@ CARD_TEMPLATE = "song_list.html"
 HELP_TEMPLATE = "help.html"
 STATUS_TEMPLATE = "status.html"
 TEXT_TEMPLATE = "text.html"
+
+# 行内【小标题】：允许最多 3 字符前缀（emoji）与后续说明文字
+_HEADING_RE = re.compile(r"^(.{0,3}?)【([^】\n]{1,24})】(.*)$")
 
 # 多平台卡片与单平台卡片共用同一模板，只有 hero 主题不同
 MULTI_THEME = "multi"
@@ -325,6 +329,9 @@ class TextSection:
 def split_sections(text: str) -> tuple[TextSection, ...]:
     """把纯文本按 ``【小标题】`` 拆成段落。
 
+    标题既可能独占一行（``【小标题】``），也可能带前缀与后续说明
+    （``🎵【网易云音乐】共 2 个``）；两种都认，行内其余内容作为正文首行。
+
     Args:
         text: 原始文本，空行会被跳过。
 
@@ -343,10 +350,12 @@ def split_sections(text: str) -> tuple[TextSection, ...]:
         stripped = raw.strip()
         if not stripped:
             continue
-        if stripped.startswith("【") and stripped.endswith("】") and len(stripped) > 2:
+        match = _HEADING_RE.match(stripped)
+        if match:
             flush()
-            heading = stripped[1:-1]
-            lines = []
+            heading = match.group(2)
+            rest = f"{match.group(1)} {match.group(3)}".strip()
+            lines = [rest] if rest else []
             continue
         lines.append(raw.rstrip())
     flush()

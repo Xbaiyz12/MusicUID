@@ -1463,6 +1463,29 @@ def test_text_card_template_renders_content() -> None:
     assert "正文丙" in html
 
 
+def test_split_sections_accepts_inline_headings() -> None:
+    """【标题】允许带前缀与后续说明；旧判据要求整行恰好是【标题】，导致分段永不生效。"""
+    from MusicUID.MusicUID.musicuid_card import split_sections
+
+    # 独占一行
+    plain = split_sections("【标题甲】\n正文一")
+    assert len(plain) == 1
+    assert plain[0].heading == "标题甲"
+    assert "正文一" in plain[0].lines
+
+    # 带 emoji 前缀与后续说明（账号池 / 签到回执的真实形态）
+    inline = split_sections("🎵【网易云音乐】共 2 个，其中 1 个已启用：\n  1. 主号\n\n【小号】签到与云贝\n❌ 失败")
+    assert [s.heading for s in inline] == ["网易云音乐", "小号"]
+    assert any("共 2 个" in line for line in inline[0].lines)
+    assert any("失败" in line for line in inline[1].lines)
+
+    # 没有小标题时整段作为一段
+    flat = split_sections("第一行\n第二行")
+    assert len(flat) == 1
+    assert flat[0].heading == ""
+    assert flat[0].lines == ("第一行", "第二行")
+
+
 def test_netease_transport_error_is_not_account_failure(
     tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
