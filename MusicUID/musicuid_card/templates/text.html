@@ -49,9 +49,9 @@
 </head>
 <body>
   <div class="card">
-    <div class="title">{{ title }}</div>
-    {% if subtitle %}<div class="subtitle">{{ subtitle }}</div>{% endif %}
-    {% for section in sections %}
+    <div class="title">{{ data.title }}</div>
+    {% if data.subtitle %}<div class="subtitle">{{ data.subtitle }}</div>{% endif %}
+    {% for section in data.sections %}
     <div class="section">
       {% if section.heading %}<div class="heading">{{ section.heading }}</div>{% endif %}
       {% for line in section.lines %}<div class="line">{{ line }}</div>{% endfor %}

@@ -1447,6 +1447,22 @@ def test_qq_missing_fields_rejects_p_uin() -> None:
     assert _cookie_missing_fields("qq", "uin=123456") != ""
 
 
+def test_text_card_template_renders_content() -> None:
+    """render_card 只注入 `data`；模板用裸变量会渲染成空卡片（曾让账号池/签到图全空白）。"""
+    from MusicUID.MusicUID.utils.render import _env
+
+    tpl = _env.get_template("text.html")
+    html = tpl.render(
+        data={
+            "title": "标题甲",
+            "sections": [{"heading": "小标题乙", "lines": ["正文丙"]}],
+        }
+    )
+    assert "标题甲" in html
+    assert "小标题乙" in html
+    assert "正文丙" in html
+
+
 def test_netease_transport_error_is_not_account_failure(
     tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
