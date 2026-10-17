@@ -275,7 +275,7 @@ class NeteaseProvider:
         try:
             from Crypto.Cipher import AES  # noqa: F401
 
-            from ..accounts import iter_cookies, reset_failure, record_failure
+            from ..accounts import iter_cookies, reset_failure
             from .netease_crypto import weapi_form
         except ImportError as e:
             logger.debug(f"[MusicUID] weapi 不可用（缺 pycryptodome）：{e}")
@@ -288,7 +288,6 @@ class NeteaseProvider:
         for cookie in iter_cookies("netease"):
             headers["Cookie"] = cookie
             hit = ""
-            responded = False
             for level in levels:
                 payload: dict[str, object] = {
                     "ids": f"[{song.song_id}]",
@@ -302,7 +301,6 @@ class NeteaseProvider:
                     # 传输错误跟账号无关：不记失败，继续试下一档
                     logger.debug(f"[MusicUID] weapi 取流请求失败（{level}）：{e}")
                     continue
-                responded = True
                 for raw in get_list(to_obj(data), "data"):
                     url = get_str(to_obj(raw), "url")
                     if url:
@@ -314,8 +312,7 @@ class NeteaseProvider:
                 reset_failure("netease", cookie)
                 logger.debug(f"[MusicUID] weapi 命中 {level}：{song.name}")
                 return hit
-            # 只有真的问过服务端却没下发直链，才算这个号的问题；
-            # 全部档位都是传输错误时不能记账，否则网络抖动会把好号挂起
-            if responded:
-                record_failure("netease", cookie)
+            # 不再按账号失败记账：weapi 对「未登录」与「歌曲版权 / VIP 受限」
+            # 都表现为请求成功但 url 为空，无法区分；一旦误判，连点几首受限歌
+            # 就会把健康账号挂起。宁可不记，也不误伤可用性。
         return ""

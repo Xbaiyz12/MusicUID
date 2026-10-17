@@ -1,4 +1,4 @@
-"""Per-session search results so 听N can pick a song later."""
+"""按（群 + 用户）隔离的搜索列表，供「听N」稍后选歌。"""
 
 from __future__ import annotations
 
@@ -10,15 +10,15 @@ from gsuid_core.models import Event
 
 from ..utils.provider import SongInfo
 
-# 列表有效期：与原插件一致，10 分钟内可继续选歌
+# 列表有效期：与原插件一致，10 分钟内可继续选歌；每个用户各自计时
 SESSION_TTL_SEC = 600
-# 最大会话容量，防止群多长期运行内存泄漏
-MAX_SESSION_COUNT = 500
+# 最大会话容量：按用户隔离后条目会明显变多，适当放大以防长期运行内存泄漏
+MAX_SESSION_COUNT = 2000
 
 
 @dataclass
 class SongListSession:
-    """The most recent search results of one chat session.
+    """The most recent search results of one user in one chat.
 
     Attributes:
         platform: Provider key the list came from.
@@ -37,15 +37,21 @@ _sessions: OrderedDict[str, SongListSession] = OrderedDict()
 
 
 def session_key(ev: Event) -> str:
-    """Pick the cache key of a session (group chat shares one list).
+    """Pick the cache key of a session.
+
+    群聊里按「群号 + 用户号」隔离：早先整群共用一个列表，谁后点歌就会把前一个人
+    的列表顶掉，前一个人再发「听N」时命中的是别人的结果。改为按用户隔离后，
+    每个人的列表与有效期都互不影响。
 
     Args:
         ev: The current event.
 
     Returns:
-        The group id for group chats, otherwise the user id.
+        群聊为 ``群号:用户号``，私聊为 ``用户号``。
     """
-    return ev.group_id or ev.user_id
+    if ev.group_id:
+        return f"{ev.group_id}:{ev.user_id}"
+    return ev.user_id
 
 
 def save_session(ev: Event, platform: str, keyword: str, songs: list[SongInfo]) -> None:

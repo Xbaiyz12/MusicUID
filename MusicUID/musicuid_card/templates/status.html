@@ -78,18 +78,9 @@
       border-radius: 16px;
       background: linear-gradient(165deg, #ffffff 0%, #fbfbfd 100%);
       border: 1px solid rgba(0, 0, 0, 0.06);
+      /* 平台色左条：直接用 border-left（pytakumi 不渲染 ::before 伪元素） */
+      border-left: 3.5px solid var(--pc, #999);
       margin-bottom: 8px;
-      position: relative;
-      overflow: hidden;
-    }
-
-    .plat::before {
-      content: "";
-      position: absolute;
-      left: 0; top: 0; bottom: 0;
-      width: 3.5px;
-      background: var(--pc, #999);
-      opacity: 0.85;
     }
 
     .plat.p-netease { --pc: #ec4141; --psoft: #fdeceb; }

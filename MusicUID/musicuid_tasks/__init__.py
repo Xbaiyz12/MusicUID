@@ -216,7 +216,8 @@ async def notify_task_result(target: str, text: str) -> bool:
     定时任务是静默的：不推送的话用户根本看不到它在跑，所以结果要发出来。
 
     Args:
-        target: 通知目标，``群号`` 或 ``适配器:群号``。
+        target: 通知目标，支持 ``群号`` / ``适配器:群号`` / ``p:QQ号`` /
+            ``适配器:p:QQ号`` 四种写法。
         text: 要发送的内容。
 
     Returns:
@@ -226,12 +227,22 @@ async def notify_task_result(target: str, text: str) -> bool:
     if not cleaned:
         return False
 
-    adapter, _, target = cleaned.partition(":")
-    if not target:
-        adapter, target = "", adapter
-    # p: 前缀表示私聊，其余按群号处理
-    is_private = target.startswith("p:")
-    chat_id = target[2:] if is_private else target
+    # 依次识别 群号 / 适配器:群号 / p:QQ号 / 适配器:p:QQ号；
+    # 注意必须先判 p: 前缀再 partition，否则 "p:123" 会被拆成 适配器="p"。
+    adapter = ""
+    is_private = False
+    if cleaned.startswith("p:"):
+        is_private = True
+        target = cleaned[2:]
+    else:
+        first, _, rest = cleaned.partition(":")
+        if not rest:
+            target = first
+        elif rest.startswith("p:"):
+            adapter, target, is_private = first, rest[2:], True
+        else:
+            adapter, target = first, rest
+    chat_id = target
 
     from gsuid_core.gss import gss
 

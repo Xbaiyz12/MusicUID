@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import json
-import socket
-import asyncio
-import ipaddress
 from typing import Final
 from urllib.parse import quote, urlparse
 
@@ -14,7 +11,7 @@ import httpx
 from gsuid_core.logger import logger
 
 from .base import SongInfo
-from ..http import get_client
+from ..http import get_client, clean_url_for_log, points_to_private_host
 from ...musicuid_config import music_config
 
 _DEFAULT_TIMEOUT_SEC = 8.0
@@ -58,30 +55,6 @@ def _looks_like_http_url(value: str) -> bool:
     trimmed = value.strip()
     parsed = urlparse(trimmed)
     return parsed.scheme in ("http", "https") and bool(parsed.hostname)
-
-
-async def _points_to_private_host(url: str) -> bool:
-    """判断直链是否指向内网 / 环回 / 链路本地地址。
-
-    自建音源服务的响应属于不可信输入，直接下载会让 core 变成内网探测器，
-    所以解析 DNS 后逐个地址校验；解析不出来时按不安全处理。
-    """
-    host = urlparse(url).hostname
-    if not host:
-        return True
-    try:
-        infos = await asyncio.to_thread(socket.getaddrinfo, host, None)
-    except OSError:
-        return True
-    for info in infos:
-        address = info[4][0]
-        try:
-            parsed = ipaddress.ip_address(address)
-        except ValueError:
-            return True
-        if parsed.is_private or parsed.is_loopback or parsed.is_link_local or parsed.is_reserved or parsed.is_multicast:
-            return True
-    return False
 
 
 def _extract_url_from_json(data: object) -> str:
@@ -197,7 +170,7 @@ async def resolve_custom_api(song: SongInfo) -> str:
         play_url = _extract_url_from_json(res_json)
         if not play_url:
             continue
-        if await _points_to_private_host(play_url):
+        if await points_to_private_host(play_url):
             logger.warning("[MusicUID] 自建音源返回了指向内网/环回地址的直链，已忽略")
             continue
         logger.info(f"[MusicUID] 自建音源服务成功解析 {song.platform.upper()} 歌曲 《{song.name}》直链")
@@ -218,7 +191,7 @@ async def test_custom_api_connection(api_url: str, token: str = "") -> tuple[boo
     try:
         resp = await get_client().get(probe_url, headers=headers, timeout=_PROBE_TIMEOUT_SEC)
     except httpx.HTTPError as e:
-        return False, f"网络连接失败: {e}"
+        return False, f"网络连接失败: {type(e).__name__}（{clean_url_for_log(probe_url)}）"
     if resp.status_code in (200, 400, 404):
         return True, f"服务响应正常（HTTP {resp.status_code}）"
     return False, f"服务返回异常状态码: HTTP {resp.status_code}"

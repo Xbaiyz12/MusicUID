@@ -11,7 +11,8 @@ from gsuid_core.bot import Bot
 from gsuid_core.logger import logger
 from gsuid_core.segment import MessageSegment
 
-from ..utils.http import get_client
+from ..version import MusicUIDVersion
+from ..utils.http import fetch_bytes_checked
 from ..utils.render import render_card
 from ..utils.provider import SongInfo, get_provider
 from ..musicuid_config import music_config
@@ -21,14 +22,20 @@ HELP_TEMPLATE = "help.html"
 STATUS_TEMPLATE = "status.html"
 TEXT_TEMPLATE = "text.html"
 
-# 行内【小标题】：允许最多 3 字符前缀（emoji）与后续说明文字
-_HEADING_RE = re.compile(r"^(.{0,3}?)【([^】\n]{1,24})】(.*)$")
+# 行内【小标题】：允许最多 3 字符前缀（emoji）与后续说明文字；
+# 标题上限 40 字，太长的（如「🌐 自建音源服务（方案五：自建 QQMusicApi / 微服务）」）
+# 才回退为普通正文，避免同卡里小标题样式忽有忽无
+_HEADING_RE = re.compile(r"^(.{0,3}?)【([^】\n]{1,40})】(.*)$")
 
 # 多平台卡片与单平台卡片共用同一模板，只有 hero 主题不同
 MULTI_THEME = "multi"
 
 # 封面内联的体积上限：超大图会把整张卡片的 HTML 撑到几十 MB
 MAX_COVER_BYTES = 2 * 1024 * 1024
+
+# 一张卡片全部封面加起来的上限：只卡单张时，十几张 2MB 的图能把整份 HTML
+# 撑到几十 MB，渲染与传输都会明显变慢。
+MAX_COVER_TOTAL_BYTES = 8 * 1024 * 1024
 
 # 超过这个字数就渲染成图片，免得群里刷屏
 LONG_TEXT_THRESHOLD = 50
@@ -155,12 +162,15 @@ async def _inline_covers(rows: list[dict[str, object]]) -> None:
     """Download covers and inline them as data URIs.
 
     pytakumi 渲染器不联网取图，留着远程 URL 会画成空白，所以先把封面抓回来内联。
+    封面 URL 可能来自不可信的自建音源，故逐张校验主机并禁止跟随重定向，避免被
+    302 到内网；同时限制单张与合计体积，防止十几张大图把整份 HTML 撑爆。
     单张失败只清空该行封面，绝不影响整张卡片。
 
     Args:
         rows: Template rows produced by :func:`_song_row`, modified in place.
     """
     sem = asyncio.Semaphore(5)
+    budget = {"bytes": MAX_COVER_TOTAL_BYTES}
 
     async def one(row: dict[str, object]) -> None:
         url = row.get("cover")
@@ -168,14 +178,16 @@ async def _inline_covers(rows: list[dict[str, object]]) -> None:
             return
         async with sem:
             try:
-                resp = await get_client().get(url, timeout=3.0)
-                resp.raise_for_status()
-                if len(resp.content) > MAX_COVER_BYTES:
-                    logger.debug(f"[MusicUID] 封面过大已跳过（{len(resp.content)} bytes）")
+                # 封面 URL 可能来自不可信的第三方音源，走 fetch_bytes_checked：
+                # 逐跳跟随重定向并每跳校验主机，不会被打到内网地址。
+                content, mime = await fetch_bytes_checked(url, 3.0)
+                size = len(content)
+                if size > MAX_COVER_BYTES or size > budget["bytes"]:
+                    logger.debug(f"[MusicUID] 封面过大或超出总量预算已跳过（{size} bytes）")
                     row["cover"] = ""
                     return
-                mime = resp.headers.get("content-type", "image/jpeg").split(";")[0]
-                row["cover"] = f"data:{mime};base64,{base64.b64encode(resp.content).decode()}"
+                budget["bytes"] -= size
+                row["cover"] = f"data:{mime};base64,{base64.b64encode(content).decode()}"
             except Exception as e:  # noqa: BLE001
                 logger.debug(f"[MusicUID] 封面内联失败（{url[:60]}）：{e}")
                 row["cover"] = ""
@@ -236,7 +248,7 @@ async def send_song_list(
         if playable_names:
             tip = (
                 f"发送「{play_hint}」播放第 N 首（编号全平台连续，"
-                f"当前可播放：{'、'.join(playable_names)}），列表 10 分钟内有效"
+                f"当前可播放：{'、'.join(playable_names)}），列表按人独立保存、10 分钟内有效"
             )
         else:
             tip = "当前列出的平台暂时都取不到音源"
@@ -269,6 +281,7 @@ async def send_help_card(bot: Bot, sections: tuple[HelpSection, ...], fallback_t
     """
     if music_config.get_config("render_card").data:
         data: dict[str, object] = {
+            "version": f"v{MusicUIDVersion.rsplit('.', 1)[0]}",
             "sections": [
                 {
                     "type": section.theme,
@@ -354,7 +367,10 @@ def split_sections(text: str) -> tuple[TextSection, ...]:
         if match:
             flush()
             heading = match.group(2)
-            rest = f"{match.group(1)} {match.group(3)}".strip()
+            # 前缀（≤3 字符，如 emoji）只跟随正文首行；「🎵【标题】」这类
+            # 后面没正文的写法若保留前缀，会让卡片里多出一行孤立的 🎵。
+            body = match.group(3).strip()
+            rest = f"{match.group(1)} {body}".strip() if body else ""
             lines = [rest] if rest else []
             continue
         lines.append(raw.rstrip())

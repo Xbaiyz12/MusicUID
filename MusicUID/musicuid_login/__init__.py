@@ -11,6 +11,7 @@ from gsuid_core.logger import logger
 from gsuid_core.models import Event
 from gsuid_core.segment import MessageSegment
 
+from ..utils.http import clean_url_for_log
 from ..utils.login import (
     LoginStatus,
     LoginSession,
@@ -522,7 +523,7 @@ async def handle_set_custom_api(bot: Bot, ev: Event) -> None:
         return
 
     music_config.set_config("custom_api_url", url)
-    logger.info(f"[MusicUID] 已配置自建音源 API: {url}")
+    logger.info(f"[MusicUID] 已配置自建音源 API: {clean_url_for_log(url)}")
     await bot.send(
         f"✅ 已成功配置自建音源服务地址！\n• 端点: {url}\n💡 建议发送「测试自建api」验证服务连通性与可用性。"
     )

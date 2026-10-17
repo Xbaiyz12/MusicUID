@@ -5,20 +5,21 @@
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    width: 660px;
+    width: 592px;
     font-family: "MiSans", "Microsoft YaHei", "PingFang SC", sans-serif;
     background: linear-gradient(160deg, #f6f4ff 0%, #eef2ff 100%);
-    padding: 18px;
+    padding: 16px;
   }
   .card {
     background: #ffffff;
     border-radius: 22px;
-    padding: 26px 28px 22px;
+    padding: 24px 26px 20px;
     box-shadow: 0 10px 30px rgba(96, 84, 180, 0.10);
+    border: 1px solid rgba(0, 0, 0, 0.05);
   }
   .title {
-    font-size: 21px;
-    font-weight: 700;
+    font-size: 20px;
+    font-weight: 800;
     color: #6d5ce0;
     letter-spacing: 0.4px;
   }
@@ -27,7 +28,7 @@
     font-size: 12.5px;
     color: #9aa0b5;
   }
-  .section { margin-top: 18px; }
+  .section { margin-top: 16px; }
   .heading {
     font-size: 14.5px;
     font-weight: 700;
@@ -38,13 +39,41 @@
     line-height: 1.2;
   }
   .line {
-    font-size: 13px;
+    font-size: 13.5px;
     color: #3d4256;
-    line-height: 1.9;
+    line-height: 1.95;
     white-space: pre-wrap;
     word-break: break-word;
   }
-  .plain { margin-top: 16px; }
+  /* 歌名行（🎵 开头）：作为内容区的小节头 */
+  .songhead {
+    margin: 2px 0 8px;
+    font-size: 15px;
+    font-weight: 800;
+    color: #33364a;
+  }
+  /* 歌词行：时间戳列 + 歌词正文 */
+  .lrc {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding: 5px 0;
+  }
+  .lrc-t {
+    flex-shrink: 0;
+    min-width: 58px;
+    text-align: right;
+    font-size: 11px;
+    font-weight: 700;
+    color: #a8a2cf;
+    font-family: "Cascadia Code", "Consolas", monospace;
+  }
+  .lrc-x {
+    font-size: 14.5px;
+    color: #2f3345;
+    line-height: 1.55;
+  }
+  .plain { margin-top: 14px; }
 </style>
 </head>
 <body>
@@ -52,9 +81,38 @@
     <div class="title">{{ data.title }}</div>
     {% if data.subtitle %}<div class="subtitle">{{ data.subtitle }}</div>{% endif %}
     {% for section in data.sections %}
-    <div class="section">
+    <div class="section{% if not section.heading %} plain{% endif %}">
       {% if section.heading %}<div class="heading">{{ section.heading }}</div>{% endif %}
-      {% for line in section.lines %}<div class="line">{{ line }}</div>{% endfor %}
+      {% for line in section.lines %}
+      {#- 只把 [分:秒] / [分:秒.毫秒] 算作时间戳：循环剥离行首的多个时间戳，
+          其余部分作为歌词正文；认不出时间戳的方括号行按正文并去掉外层方括号 -#}
+      {%- set ns = namespace(ts='', rest=line) -%}
+      {%- for _ in range(8) -%}
+        {%- set close = ns.rest.find(']') -%}
+        {%- if ns.rest[:1] == '[' and close != -1 -%}
+          {%- set parts = ns.rest[1:close].split(':') -%}
+          {%- set sec = parts[1].split('.') if parts|length == 2 else [] -%}
+          {%- set is_ts = parts|length == 2 and parts[0].isdigit()
+                and ((sec|length == 1 and sec[0].isdigit())
+                or (sec|length == 2 and sec[0].isdigit() and sec[1].isdigit())) -%}
+          {%- if is_ts -%}
+            {%- set ns.ts = ns.ts or ns.rest[1:close] -%}
+            {%- set ns.rest = ns.rest[close + 1:] -%}
+          {%- endif -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {% if ns.ts %}
+      {% if ns.rest.strip() %}
+      <div class="lrc"><span class="lrc-t">{{ ns.ts }}</span><span class="lrc-x">{{ ns.rest.strip() }}</span></div>
+      {% endif %}
+      {% elif line[:1] == '🎵' %}
+      <div class="songhead">{{ line }}</div>
+      {% elif line[:1] == '[' and line[-1:] == ']' %}
+      <div class="line">{{ line[1:-1] }}</div>
+      {% else %}
+      <div class="line">{{ line }}</div>
+      {% endif %}
+      {% endfor %}
     </div>
     {% endfor %}
   </div>

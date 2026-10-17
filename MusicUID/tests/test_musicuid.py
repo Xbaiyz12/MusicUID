@@ -523,8 +523,10 @@ def test_voice_segment_honours_force_local(tmp_path: Path) -> None:
 # ---------------------------------------------------------------- 会话缓存
 
 
-def test_session_key_prefers_group() -> None:
-    assert session_key(Event(user_id="u1", group_id="g1")) == "g1"
+def test_session_key_scopes_by_group_and_user() -> None:
+    # 群聊内按用户隔离：同群不同用户各拿各的 key，互不覆盖
+    assert session_key(Event(user_id="u1", group_id="g1")) == "g1:u1"
+    assert session_key(Event(user_id="u2", group_id="g1")) == "g1:u2"
     assert session_key(Event(user_id="u1")) == "u1"
 
 
@@ -546,16 +548,24 @@ def test_session_expires(monkeypatch: pytest.MonkeyPatch) -> None:
     assert get_session(ev) is None
 
 
-def test_group_sessions_are_isolated() -> None:
+def test_sessions_are_isolated_per_user_and_group() -> None:
+    # 同一群里两个用户各点各的歌，列表互不覆盖——这正是「后点歌顶掉前一个」的回归点
     save_session(Event(user_id="u1", group_id="g1"), "qq", "a", [_song("1")])
-    save_session(Event(user_id="u2", group_id="g2"), "kugou", "b", [_song("2")])
-    first = get_session(Event(user_id="u9", group_id="g1"))
-    second = get_session(Event(user_id="u9", group_id="g2"))
-    assert first is not None
-    assert second is not None
-    assert first.keyword == "a"
-    assert second.keyword == "b"
-    assert get_session(Event(user_id="u3", group_id="g3")) is None
+    save_session(Event(user_id="u2", group_id="g1"), "kugou", "b", [_song("2")])
+    first = get_session(Event(user_id="u1", group_id="g1"))
+    second = get_session(Event(user_id="u2", group_id="g1"))
+    assert first is not None and first.keyword == "a"
+    assert second is not None and second.keyword == "b"
+
+    # 跨群同样隔离
+    save_session(Event(user_id="u1", group_id="g2"), "netease", "c", [_song("3")])
+    other = get_session(Event(user_id="u1", group_id="g2"))
+    again = get_session(Event(user_id="u1", group_id="g1"))
+    assert other is not None and other.keyword == "c"
+    assert again is not None and again.keyword == "a"
+
+    # 没点过歌的用户取不到别人的列表
+    assert get_session(Event(user_id="u3", group_id="g1")) is None
 
 
 # ---------------------------------------------------------------- 分享链接解析

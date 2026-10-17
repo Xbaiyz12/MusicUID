@@ -43,16 +43,51 @@
        渐变端点必须写成字面色值：pytakumi(Takumi) 不解析 var() 作为渐变端点，
        写成 var(--c1) 会让整条 background 失效、hero 变白底白字而“消失”。 */
     .hero {
-      padding: 24px 24px 20px;
+      padding: 24px 24px 22px;
       color: #fff;
       background: linear-gradient(135deg, #7b6ce0 0%, #4c3fa8 100%);
+      position: relative;
+      overflow: hidden;
     }
 
     .theme-netease .hero, body.netease .hero { background: linear-gradient(135deg, #f0605a 0%, #d63333 100%); }
     .theme-qq .hero, body.qq .hero           { background: linear-gradient(135deg, #3fd18d 0%, #189c5c 100%); }
     .theme-kugou .hero, body.kugou .hero     { background: linear-gradient(135deg, #5cb9f8 0%, #1c7fce 100%); }
 
-    .hero-top { display: flex; align-items: flex-start; gap: 14px; }
+    /* hero 装饰：右上圆环 + 右下探出的黑胶唱片（纯装饰，置于内容之下） */
+    .hero-deco {
+      position: absolute;
+      right: -58px;
+      top: -92px;
+      width: 190px;
+      height: 190px;
+      border-radius: 50%;
+      border: 24px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .hero-disc {
+      position: absolute;
+      right: 34px;
+      bottom: -80px;
+      width: 150px;
+      height: 150px;
+      border-radius: 50%;
+      border: 9px solid rgba(255, 255, 255, 0.22);
+      background: rgba(255, 255, 255, 0.1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .hero-disc-core {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.26);
+      border: 5px solid rgba(255, 255, 255, 0.34);
+    }
+
+    .hero-top { display: flex; align-items: flex-start; gap: 14px; position: relative; }
 
     .brand {
       width: 46px;
@@ -137,18 +172,9 @@
       border-radius: 14px;
       background: linear-gradient(165deg, #ffffff 0%, #fbfbfd 100%);
       border: 1px solid rgba(0, 0, 0, 0.06);
+      /* 平台色左条：直接用 border-left（pytakumi 不渲染 ::before 伪元素） */
+      border-left: 4px solid var(--gc, #999);
       margin-bottom: 7px;
-      position: relative;
-      overflow: hidden;
-    }
-
-    .song::before {
-      content: "";
-      position: absolute;
-      left: 0; top: 0; bottom: 0;
-      width: 3px;
-      background: var(--gc, #999);
-      opacity: 0.85;
     }
 
     .idx {
@@ -260,6 +286,8 @@
   <div class="page theme-{{ data.theme }}">
     <div class="card">
       <div class="hero">
+        <div class="hero-deco"></div>
+        <div class="hero-disc"><div class="hero-disc-core"></div></div>
         <div class="hero-top">
           <div class="brand">🎵</div>
           <div class="hero-text">

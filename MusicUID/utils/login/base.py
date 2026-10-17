@@ -33,7 +33,6 @@ class LoginSession:
     nickname: str = ""
     avatar_url: str = ""
     message: str = ""
-    extra_data: dict | None = None
 
 
 def make_qr_image(text: str) -> bytes:

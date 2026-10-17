@@ -1,3 +1,3 @@
 """Version of MusicUID."""
 
-MusicUIDVersion = "0.1.0"
+MusicUIDVersion = "2.0.0"

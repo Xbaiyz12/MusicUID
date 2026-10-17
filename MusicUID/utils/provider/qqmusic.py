@@ -8,7 +8,7 @@ from gsuid_core.logger import logger
 
 from .base import SongInfo, SongCollection
 from ..http import get_json, post_json
-from ..accounts import iter_cookies, reset_failure, record_failure
+from ..accounts import iter_cookies, reset_failure
 from .custom_api import resolve_custom_api
 from ..json_tools import to_obj, get_int, get_obj, get_str, get_list, join_names
 from ..login.qqmusic import load_qq_credentials, refresh_qq_credential, is_credential_expiring
@@ -29,30 +29,31 @@ QUALITY_TIERS: Final[tuple[tuple[str, str], ...]] = (("M800", "mp3"), ("C400", "
 # 取流固定使用 guid=10000；登录态缺失或曲目权限不足时返回该 code
 LOGIN_REQUIRED: Final[int] = 104003
 
-# 静默续签的冷却窗口：避免同一窗口内每次搜索/取流都插一次刷新请求
+# 静默续签的冷却窗口（秒）：避免同一凭据在窗口内被反复刷新
 REFRESH_COOLDOWN_SEC: Final[float] = 300.0
-_last_refresh_at: float = 0.0
+# 冷却按凭据独立计时，而不是全局一个时间戳
+_last_refresh_at: dict[str, float] = {}
 
 
 async def _refresh_if_needed() -> None:
     """巡检移动端凭据，临近过期就静默续签。
 
-    带冷却窗口，命中 104003 之前不会在同一次点歌里反复刷新。这里刻意不取号：
+    冷却按凭据独立计时：若用全局冷却，第一个号刚续签就会把后面同样临近过期的号
+    全部跳过，多号场景下后面的号最多要等满一个窗口才轮得到。这里刻意不取号：
     调用方自己会取号，否则一次取流会推进两次轮询游标、破坏轮换公平。
     """
-    global _last_refresh_at
     for cred in load_qq_credentials():
         if not is_credential_expiring(cred):
             continue
+        key = str(cred.get("musicid") or cred.get("str_musicid") or cred.get("nick") or "")
         now = time.time()
-        if now - _last_refresh_at < REFRESH_COOLDOWN_SEC:
-            break
-        _last_refresh_at = now
+        if now - _last_refresh_at.get(key, 0.0) < REFRESH_COOLDOWN_SEC:
+            continue
+        _last_refresh_at[key] = now
         logger.info("[MusicUID] QQ 音乐移动凭据临近过期，自动触发静默续签...")
         ok, msg = await refresh_qq_credential(cred)
         if not ok:
             logger.warning(f"[MusicUID] QQ 音乐凭据静默续签失败：{msg}，本次仍按现有 Cookie 取流")
-        break
 
 
 async def _ensure_active_cookie() -> str:
@@ -286,9 +287,9 @@ class QqMusicProvider:
                     return f"{hosts[0]}{purl}"
                 result = get_int(infos[0], "result") if infos else "none"
                 logger.debug(f"[MusicUID] QQ音乐 {suffix} 档未下发 {song.name}：result={result}")
-            # 这个号所有档位都没下发，记一次失败；连续失败够数会被挂起
-            if raw_cookie:
-                record_failure("qq", raw_cookie)
+            # 不再按账号失败记账：QQ 未下发直链几乎都是曲目级原因（如 104003
+            # 无权限 / 需要会员），与账号是否失效无关；照旧记账会让连点几首受限歌
+            # 就把健康账号逐个挂起。
 
         # 官方接口未下发有效直链（如 VIP 受限或无权播放）时，自动触发自建微服务兜底
         if priority != "custom_first":

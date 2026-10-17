@@ -136,46 +136,46 @@ async def resolve_share_link(bot: Bot, ev: Event) -> None:
     """
     if not music_config.get_config("enable_resolve").data:
         return
-    match = URL_RE.search(ev.raw_text)
-    if match is None:
-        return
-    try:
-        target = await expand_short_link(match.group(0))
-    except MusicRequestError as e:
-        logger.debug(f"[MusicUID] 短链展开失败：{e}")
-        return
-
-    netease_song = NETEASE_SONG_RE.search(target)
-    if netease_song is not None:
-        await resolve_song(bot, "netease", netease_song.group(1))
-        return
-
-    # QQ音乐三种分享格式：数字 songid、App 卡片的 songmid 参数、songDetail 路径，detail() 都认
-    qq_song = QQ_SONGID_RE.search(target) or QQ_SONGMID_RE.search(target)
-    if qq_song is not None:
-        await resolve_song(bot, "qq", qq_song.group(1))
-        return
-
-    # 酷狗分享链接的两种形态：长链/卡片直接带 hash，App 纯链接只带 chain
-    kugou_hash = KUGOU_HASH_RE.search(target)
-    if kugou_hash is not None:
-        await resolve_song(bot, "kugou", kugou_hash.group(1))
-        return
-
-    kugou_chain = KUGOU_CHAIN_RE.search(target)
-    if kugou_chain is not None:
+    # 一条消息里可能既有普通链接、又有音乐链接，只取第一个会把后者静默漏掉，
+    # 所以逐个 URL 尝试识别，命中音乐链接就处理并结束
+    for match in URL_RE.finditer(ev.raw_text):
         try:
-            song_hash = await resolve_kugou_chain(kugou_chain.group(1))
+            target = await expand_short_link(match.group(0))
         except MusicRequestError as e:
-            logger.debug(f"[MusicUID] 酷狗 chain 展开失败：{e}")
-            return
-        if not song_hash:
-            await bot.send("没能从这条酷狗分享链接里解析出歌曲")
-            return
-        await resolve_song(bot, "kugou", song_hash)
-        return
+            logger.debug(f"[MusicUID] 短链展开失败：{e}")
+            continue
 
-    collection_match = NETEASE_COLLECTION_RE.search(target)
-    if collection_match is None:
-        return
-    await resolve_collection(bot, ev, collection_match.group(1), collection_match.group(2))
+        netease_song = NETEASE_SONG_RE.search(target)
+        if netease_song is not None:
+            await resolve_song(bot, "netease", netease_song.group(1))
+            return
+
+        # QQ音乐三种分享格式：数字 songid、App 卡片的 songmid 参数、songDetail 路径，detail() 都认
+        qq_song = QQ_SONGID_RE.search(target) or QQ_SONGMID_RE.search(target)
+        if qq_song is not None:
+            await resolve_song(bot, "qq", qq_song.group(1))
+            return
+
+        # 酷狗分享链接的两种形态：长链/卡片直接带 hash，App 纯链接只带 chain
+        kugou_hash = KUGOU_HASH_RE.search(target)
+        if kugou_hash is not None:
+            await resolve_song(bot, "kugou", kugou_hash.group(1))
+            return
+
+        kugou_chain = KUGOU_CHAIN_RE.search(target)
+        if kugou_chain is not None:
+            try:
+                song_hash = await resolve_kugou_chain(kugou_chain.group(1))
+            except MusicRequestError as e:
+                logger.debug(f"[MusicUID] 酷狗 chain 展开失败：{e}")
+                continue
+            if not song_hash:
+                await bot.send("没能从这条酷狗分享链接里解析出歌曲")
+                return
+            await resolve_song(bot, "kugou", song_hash)
+            return
+
+        collection_match = NETEASE_COLLECTION_RE.search(target)
+        if collection_match is not None:
+            await resolve_collection(bot, ev, collection_match.group(1), collection_match.group(2))
+            return

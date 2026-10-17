@@ -3,8 +3,10 @@
 import re
 import time
 import random
+import asyncio
 import hashlib
 from typing import Final
+from dataclasses import replace
 
 from gsuid_core.logger import logger
 
@@ -18,11 +20,11 @@ from ..json_tools import to_obj, get_int, get_obj, get_str, get_list
 SEARCH_URL: Final[str] = "https://mobiles.kugou.com/api/v3/search/song"
 
 # 分享链接解析：这个老接口接受裸 hash，返回歌名/歌手与实际可用的 hash
-DETAIL_URL: Final[str] = "http://m.kugou.com/app/i/getSongInfo.php"
+DETAIL_URL: Final[str] = "https://m.kugou.com/app/i/getSongInfo.php"
 HEADERS: Final[dict[str, str]] = {"Referer": "https://m.kugou.com/"}
 
 # 匿名取流：旧版 CDN 只校验 md5(hash + 固定盐) 签名，不需要登录态与设备指纹
-CDN_URL: Final[str] = "http://trackercdn.kugou.com/i/v2/"
+CDN_URL: Final[str] = "https://trackercdn.kugou.com/i/v2/"
 CDN_SALT: Final[str] = "kgcloudv2"
 
 # 登录取流：网关 v5/url 不校验 signature，key 由登录态参与派生
@@ -37,6 +39,14 @@ PPAGE_ID: Final[str] = "463467626,350369493,788954147"
 # mid 只要求是稳定的十进制大整数串，与登录态无关；dfid 每次随机即可
 MID_SEED: Final[str] = "MusicUID"
 DFID_CHARS: Final[str] = "1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+# 搜索结果补封面时的并发与耗时上限：避免为了一张封面把整次点歌拖慢，
+# 也避免对上游 detail 接口短时间打出太多请求。缓存按专辑名复用结果。
+_COVER_FILL_CONCURRENCY: Final[int] = 4
+_COVER_FILL_TIMEOUT_S: Final[float] = 3.0
+_COVER_FILL_TOTAL_TIMEOUT_S: Final[float] = 5.0
+_COVER_CACHE_MAX: Final[int] = 512
+_cover_cache: dict[str, str] = {}
 # 网关按安卓客户端校验请求头：dfid / mid / clienttime 必须与 URL 参数一致
 ANDROID_UA: Final[str] = "Android15-1070-11083-46-0-DiscoveryDRADProtocol-wifi"
 EXTRA_HEADERS: Final[dict[str, str]] = {
@@ -90,7 +100,66 @@ class KugouProvider:
                     payplay=get_int(item, "privilege") > 0,
                 )
             )
-        return songs
+        return await self._fill_covers(songs)
+
+    async def _fill_covers(self, songs: list[SongInfo]) -> list[SongInfo]:
+        """为搜索结果补齐专辑封面。
+
+        v3 搜索接口本身不返回封面字段，而 imge.kugou.com/stdmusic/{album_id}.jpg
+        这类拼 URL 的规律现在只会命中默认占位图；唯一的稳定来源是 detail 接口
+        （getSongInfo.php）响应里的 ``album_img``。这里按专辑名去重后并发请求，
+        同专辑结果共用一张封面，避免每次点歌都放大请求数。为控制对上游的压力与
+        自身延迟，并发放到 ``_COVER_FILL_CONCURRENCY`` 个、单请求限时
+        ``_COVER_FILL_TIMEOUT_S`` 秒、整批限时 ``_COVER_FILL_TOTAL_TIMEOUT_S`` 秒，
+        并按专辑名缓存结果供后续复用。
+
+        Args:
+            songs: 刚从搜索接口构造出的结果列表（SongInfo 为冻结数据类）。
+
+        Returns:
+            封面补齐后的新列表；``SongInfo`` 均不可变，未命中封面的项原样保留。
+        """
+        probes: dict[str, SongInfo] = {}
+        for song in songs:
+            if song.cover_url or not song.album or song.album in probes:
+                continue
+            if song.album in _cover_cache:
+                continue
+            probes[song.album] = song
+
+        if probes:
+            sem = asyncio.Semaphore(_COVER_FILL_CONCURRENCY)
+
+            async def fetch(album: str, probe: SongInfo) -> None:
+                async with sem:
+                    try:
+                        detail = await asyncio.wait_for(
+                            self.detail(probe.song_id), timeout=_COVER_FILL_TIMEOUT_S
+                        )
+                    except Exception:  # noqa: BLE001 - 封面补齐失败不应影响搜索结果
+                        return
+                    if detail and detail.cover_url:
+                        _cover_cache[album] = detail.cover_url
+
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*(fetch(album, probe) for album, probe in probes.items())),
+                    timeout=_COVER_FILL_TOTAL_TIMEOUT_S,
+                )
+            except asyncio.TimeoutError:
+                pass
+            # 简单的容量截断，避免缓存无限增长
+            if len(_cover_cache) > _COVER_CACHE_MAX:
+                for stale in list(_cover_cache)[: len(_cover_cache) - _COVER_CACHE_MAX]:
+                    _cover_cache.pop(stale, None)
+
+        def resolve(song: SongInfo) -> SongInfo:
+            if song.cover_url:
+                return song
+            cached = _cover_cache.get(song.album, "")
+            return replace(song, cover_url=cached) if cached else song
+
+        return [resolve(song) for song in songs]
 
     async def detail(self, song_id: str) -> SongInfo | None:
         """Fetch one song by its file hash.
@@ -168,19 +237,22 @@ class KugouProvider:
         """
         # 逐号重试：某个号失效就换下一个，全部失败再退回免登录链路
         for cookie in iter_cookies("kugou"):
-            url = await self._logged_play_url(song, cookie)
+            url, credential_problem = await self._logged_play_url(song, cookie)
             if url:
                 reset_failure("kugou", cookie)
                 return url
-            # 连续失败够数会被挂起，不再拖累后续点歌
-            record_failure("kugou", cookie)
+            # 只有明确是凭据问题（如 Cookie 缺 t / KugooID）才记失败：网关对
+            # 「未购买专辑」这类歌曲级拒绝同样返回空 url，若一并按账号失败记账，
+            # 连点几首受限歌就会把健康账号逐个挂起。
+            if credential_problem:
+                record_failure("kugou", cookie)
         url = await self._anonymous_play_url(song)
         if url:
             return url
         # 与网易云 / QQ 保持一致：官方链路都没下发时交给自建音源兜底
         return await resolve_custom_api(song)
 
-    async def _logged_play_url(self, song: SongInfo, cookie: str) -> str:
+    async def _logged_play_url(self, song: SongInfo, cookie: str) -> tuple[str, bool]:
         """Ask the gateway for a url with the account login state attached.
 
         网关要两样东西：``key`` = md5(hash + 盐 + appid + mid + userid)，以及
@@ -195,13 +267,15 @@ class KugouProvider:
             cookie: Raw KuGou cookie string copied from the browser.
 
         Returns:
-            The audio URL, or an empty string when the gateway refuses.
+            ``(url, credential_problem)``：``url`` 为空表示网关未下发；
+            ``credential_problem`` 为 ``True`` 仅当失败可明确归因于凭据本身
+            （缺少 ``t`` / ``KugooID``），而不是歌曲级拒绝。
         """
         token = re.search(r"(?:^|;\s*)t=([^;]*)", cookie)
         userid = re.search(r"(?:^|;\s*)KugooID=([^;]*)", cookie)
         if token is None or userid is None:
             logger.warning("[MusicUID] 酷狗 Cookie 缺少 t / KugooID，已回退免登录取流")
-            return ""
+            return "", True
         file_hash = song.song_id.lower()
         # 设备指纹必须与 Cookie 里的登录态解耦：直接沿用 Cookie 的 mid / dfid 会被服务端
         # 判 20018，用固定派生的 mid + 每次随机的 dfid 才与上游客户端行为一致
@@ -255,10 +329,10 @@ class KugouProvider:
         body = to_obj(payload)
         for raw in get_list(body, "url"):
             if isinstance(raw, str) and raw:
-                return raw
+                return raw, False
         # 20018 = 未购买该专辑（只给试听），20028 = 触发人机验证；两者都回退免登录 CDN
         logger.debug(f"[MusicUID] 酷狗网关未下发 {song.name}：status={body.get('status')} err={body.get('error_code')}")
-        return ""
+        return "", False
 
     async def _anonymous_play_url(self, song: SongInfo) -> str:
         """Resolve a url through the login-free legacy CDN.

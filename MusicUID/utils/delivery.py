@@ -273,6 +273,9 @@ async def deliver_audio(
         audio_path.unlink(missing_ok=True)
         if voice_path != audio_path:
             voice_path.unlink(missing_ok=True)
+        # 语音与文件都关着时根本没发出任何东西，不能报成「发送失败」
+        if not send_voice and not send_file:
+            return "语音发送与文件发送均已关闭，请在配置里至少开启一个才能收到音频"
         return "；".join(failures) or "音频发送失败"
 
     _schedule_cleanup(audio_path, keep_sec)

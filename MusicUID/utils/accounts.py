@@ -214,6 +214,8 @@ def _write_all(data: dict[str, list[MusicAccount]]) -> bool:
     tmp = ACCOUNTS_PATH.with_name(f"{ACCOUNTS_PATH.name}.tmp")
     try:
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        # 账号池里是明文凭据，尽量收敛可读权限（Windows 上只影响只读位，无害）
+        tmp.chmod(0o600)
         tmp.replace(ACCOUNTS_PATH)
     except OSError as e:
         logger.warning(f"[MusicUID] 账号池写入失败：{e}")
@@ -243,11 +245,13 @@ def _read_all() -> dict[str, list[MusicAccount]]:
     """读取所有平台的账号，主文件缺失时尝试迁移旧结构。"""
     if not ACCOUNTS_PATH.exists():
         return _migrate_legacy()
+
     try:
         raw = json.loads(ACCOUNTS_PATH.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
         logger.warning(f"[MusicUID] 账号池读取失败：{e}")
         return {}
+
     root = to_obj(raw)
     data: dict[str, list[MusicAccount]] = {}
     for platform in root:

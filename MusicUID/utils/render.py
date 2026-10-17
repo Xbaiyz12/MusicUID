@@ -1,4 +1,8 @@
-"""Render result cards to PNG through a resident Chromium instance."""
+"""Render result cards to PNG.
+
+主路径用 GsCore 内置的 pytakumi（纯本地、无需浏览器）；pytakumi 不可用或
+渲染失败时回退到常驻 Playwright Chromium 截图。
+"""
 
 from __future__ import annotations
 
@@ -24,6 +28,9 @@ DEVICE_SCALE_FACTOR = 2
 CONTENT_TIMEOUT_MS = 15000
 IDLE_TIMEOUT_MS = 8000
 SETTLE_MS = 50
+# pytakumi 走 core 的 to_thread 渲染，本身没有超时；这里兜一层，
+# 防止渲染卡死时点歌协程永久悬挂、占死默认线程池。
+PYTAKUMI_TIMEOUT_S = 10.0
 CHROME_ARGS = ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
 
 # 卡片模板里 .page 的 CSS 宽（.card 560px + 左右 padding 16px*2 = 592px）；
@@ -243,15 +250,21 @@ async def _render_pytakumi(html: str) -> bytes | None:
         logger.warning(f"[MusicUID] pytakumi 不可用，改用浏览器渲染：{e}")
         return None
     try:
-        return await render_html_to_bytes(
-            html,
-            max_width=CARD_CSS_WIDTH * 2,
-            dpi=192,
-            root_max_width=CARD_CSS_WIDTH,
-            default_font_size=14,
-            font_name="MiSans, Microsoft YaHei UI, sans-serif",
-            lang="zh",
+        return await asyncio.wait_for(
+            render_html_to_bytes(
+                html,
+                max_width=CARD_CSS_WIDTH * 2,
+                dpi=192,
+                root_max_width=CARD_CSS_WIDTH,
+                default_font_size=14,
+                font_name="MiSans, Microsoft YaHei UI, sans-serif",
+                lang="zh",
+            ),
+            timeout=PYTAKUMI_TIMEOUT_S,
         )
+    except asyncio.TimeoutError:
+        logger.warning(f"[MusicUID] pytakumi 渲染超时（>{PYTAKUMI_TIMEOUT_S}s），改用浏览器渲染")
+        return None
     except Exception as e:
         logger.warning(f"[MusicUID] pytakumi 渲染失败，改用浏览器渲染：{e}")
         return None

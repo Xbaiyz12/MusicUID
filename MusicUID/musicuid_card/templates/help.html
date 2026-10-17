@@ -126,18 +126,9 @@
       border-radius: 14px;
       background: linear-gradient(165deg, #ffffff 0%, #fbfbfd 100%);
       border: 1px solid rgba(0, 0, 0, 0.06);
+      /* 分组色左条：直接用 border-left（pytakumi 不渲染 ::before 伪元素） */
+      border-left: 3.5px solid var(--gc, #999);
       margin-bottom: 7px;
-      position: relative;
-      overflow: hidden;
-    }
-
-    .cmd-item::before {
-      content: "";
-      position: absolute;
-      left: 0; top: 0; bottom: 0;
-      width: 3.5px;
-      background: var(--gc, #999);
-      opacity: 0.85;
     }
 
     .cmd-badge {
@@ -245,7 +236,7 @@
             <div class="title">点歌插件使用指南</div>
             <div class="subtitle">支持网易云、QQ 音乐、酷狗多平台搜播与扫码登录</div>
           </div>
-          <div class="pill">v2.0</div>
+          <div class="pill">{{ data.version or 'v2.0' }}</div>
         </div>
       </div>
 
