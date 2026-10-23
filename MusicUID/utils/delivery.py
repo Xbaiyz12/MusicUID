@@ -126,6 +126,17 @@ STEREO_MIN_KBPS: Final[int] = 128
 ILLEGAL_NAME_CHARS = '<>:"/\\|?*\n\r\t'
 
 
+def _resolve_ffmpeg() -> str | None:
+    """返回 imageio-ffmpeg 自带的 ffmpeg 路径，找不到时返回 None。"""
+    try:
+        from imageio_ffmpeg import get_ffmpeg_exe
+
+        return get_ffmpeg_exe()
+    except (ImportError, RuntimeError) as e:
+        logger.warning(f"[MusicUID] 未找到可用的 ffmpeg：{e}")
+        return None
+
+
 def _safe_file_name(song: SongInfo, suffix: str) -> str:
     """Build a readable, filesystem-safe file name for a song.
 
@@ -213,9 +224,13 @@ async def compress_for_voice(path: Path, bitrate: int, keep_stereo: bool) -> Pat
     """
     out = path.with_name(f"{path.stem}_v.mp3")
     channel_args = [] if keep_stereo else ["-ac", "1"]
+    ffmpeg = _resolve_ffmpeg()
+    if ffmpeg is None:
+        logger.warning("[MusicUID] 没有可用的 ffmpeg，跳过语音压缩并使用原始音频")
+        return None
     try:
         proc = await asyncio.create_subprocess_exec(
-            "ffmpeg",
+            ffmpeg,
             "-y",
             "-i",
             str(path),
