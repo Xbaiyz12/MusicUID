@@ -1633,6 +1633,49 @@ def test_deliver_audio_renames_before_metadata_and_send(
     assert bot.messages
 
 
+def test_compress_for_voice_uses_imageio_ffmpeg(
+    tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """语音压缩必须使用解析后的 imageio-ffmpeg 路径，而不是系统命令名。"""
+    from MusicUID.MusicUID.utils import delivery
+
+    captured: list[tuple[object, ...]] = []
+
+    class Proc:
+        async def wait(self) -> int:
+            return 0
+
+    async def fake_exec(*args: object, **kwargs: object) -> Proc:
+        captured.append(args)
+        Path(str(args[-1])).write_bytes(b"ID3" + b"\x00" * 64)
+        return Proc()
+
+    monkeypatch.setattr(delivery, "_resolve_ffmpeg", lambda: "/bundled/ffmpeg")
+    monkeypatch.setattr(delivery.asyncio, "create_subprocess_exec", fake_exec)
+    audio = tmp_path / "song.flac"
+    audio.write_bytes(b"fLaC" + b"\x00" * 64)
+
+    compressed = asyncio.run(delivery.compress_for_voice(audio, 128, True))
+
+    assert compressed is not None
+    assert captured[0][0] == "/bundled/ffmpeg"
+    assert captured[0][-1] == str(compressed)
+
+
+def test_compress_for_voice_skips_without_ffmpeg(
+    tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """imageio-ffmpeg 也找不到可执行文件时保留原音频，不抛异常。"""
+    from MusicUID.MusicUID.utils import delivery
+
+    monkeypatch.setattr(delivery, "_resolve_ffmpeg", lambda: None)
+    audio = tmp_path / "song.flac"
+    audio.write_bytes(b"fLaC" + b"\x00" * 64)
+
+    assert asyncio.run(delivery.compress_for_voice(audio, 128, True)) is None
+    assert audio.exists()
+
+
 def test_netease_transport_error_is_not_account_failure(
     tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
