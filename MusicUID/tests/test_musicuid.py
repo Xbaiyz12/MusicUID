@@ -1496,17 +1496,45 @@ def test_split_sections_accepts_inline_headings() -> None:
     assert flat[0].lines == ("第一行", "第二行")
 
 
+def _minimal_flac_bytes() -> bytes:
+    """构造一个能被 mutagen 识别的最小 FLAC 文件。"""
+    stream_info = (4096).to_bytes(2, "big") * 2 + b"\x00\x00\x00" * 2
+    packed = (44100 << 44) | (1 << 41) | (15 << 36)
+    stream_info += packed.to_bytes(8, "big") + b"\x00" * 16
+    return b"fLaC" + b"\x80\x00\x00\x22" + stream_info
+
+
 def test_sniff_audio_suffix_detects_container() -> None:
-    """文件名后缀必须跟真实容器一致，否则无损曲目会被发成 .mp3。"""
+    """文件头兜底只返回确定的后缀，未知内容不能伪装成 MP3。"""
     from MusicUID.MusicUID.utils.delivery import sniff_audio_suffix
 
     assert sniff_audio_suffix(b"fLaC" + b"\x00" * 8) == ".flac"
     assert sniff_audio_suffix(b"\x00\x00\x00\x20ftypM4A " + b"\x00" * 4) == ".m4a"
     assert sniff_audio_suffix(b"OggS" + b"\x00" * 8) == ".ogg"
     assert sniff_audio_suffix(b"RIFF" + b"\x00" * 4 + b"WAVE") == ".wav"
+    assert sniff_audio_suffix(b"FORM" + b"\x00" * 4 + b"AIFF") == ".aiff"
     assert sniff_audio_suffix(b"ID3" + b"\x00" * 9) == ".mp3"
-    # 识别不出的内容仍按 mp3 处理，不能因为嗅探失败就没后缀
-    assert sniff_audio_suffix(b"") == ".mp3"
+    assert sniff_audio_suffix(b"\xff\xfb\x90\x00") == ".mp3"
+    assert sniff_audio_suffix(b"\xff\xf1\x50\x40") == ".aac"
+    assert sniff_audio_suffix(b"") == ""
+    assert sniff_audio_suffix(b"<html>not audio</html>") == ""
+
+
+def test_detect_audio_suffix_uses_file_content(tmp_path: pytest.TempPathFactory) -> None:
+    """中性临时文件应由 mutagen 按实际内容识别成 .flac。"""
+    from MusicUID.MusicUID.utils.delivery import detect_audio_suffix
+
+    audio = tmp_path / "download.part"
+    audio.write_bytes(_minimal_flac_bytes())
+    assert detect_audio_suffix(audio) == ".flac"
+
+    aac = tmp_path / "aac.part"
+    aac.write_bytes(b"\xff\xf1\x50\x40" + b"\x00" * 64)
+    assert detect_audio_suffix(aac) == ".aac"
+
+    unknown = tmp_path / "unknown.part"
+    unknown.write_bytes(b"<html>not audio</html>")
+    assert detect_audio_suffix(unknown) == ""
 
 
 def test_container_for_lossless_is_flac() -> None:
@@ -1519,23 +1547,90 @@ def test_container_for_lossless_is_flac() -> None:
     assert _container_for("standard") == "mp3"
 
 
-def test_write_song_meta_skips_without_ffmpeg(
+def test_write_song_meta_uses_mutagen_for_flac(
     tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """没有 ffmpeg 时必须静默跳过，不能挡住音频发送，也不能弄丢原文件。"""
+    """FLAC 套 .mp3 临时名时由 mutagen 按内容识别并写标签，不调用 ffmpeg。"""
+    from mutagen import File as MutagenFile
+
     from MusicUID.MusicUID.utils import delivery
     from MusicUID.MusicUID.utils.provider import SongInfo
 
     async def boom(*args: object, **kwargs: object) -> object:
-        raise FileNotFoundError("ffmpeg 不存在")
+        raise AssertionError("写标签不应调用外部进程")
 
     monkeypatch.setattr(delivery.asyncio, "create_subprocess_exec", boom)
-    audio = tmp_path / "a.mp3"
-    audio.write_bytes(b"ID3" + b"\x00" * 64)
-    song = SongInfo(platform="netease", song_id="1", name="n", singers="s")
+    audio = tmp_path / "download.mp3"
+    audio.write_bytes(_minimal_flac_bytes())
+    song = SongInfo(platform="netease", song_id="1", name="晴天", singers="周杰伦", album="叶惠美")
 
-    assert asyncio.run(delivery.write_song_meta(audio, song)) is False
-    assert audio.exists()
+    assert asyncio.run(delivery.write_song_meta(audio, song)) is True
+    tagged = MutagenFile(audio, easy=True)
+    assert tagged is not None
+    assert tagged["title"] == ["晴天"]
+    assert tagged["artist"] == ["周杰伦"]
+    assert tagged["albumartist"] == ["周杰伦"]
+    assert tagged["album"] == ["叶惠美"]
+    assert audio.read_bytes().startswith(b"fLaC")
+
+
+def test_deliver_audio_renames_before_metadata_and_send(
+    tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """下载先写 .part，识别后改名，再写标签和发送。"""
+    from MusicUID.MusicUID.utils import delivery
+    from MusicUID.MusicUID.utils.provider import SongInfo
+
+    payload = b"fLaC" + b"\x00" * (delivery.MIN_AUDIO_BYTES + 64)
+    metadata_paths: list[Path] = []
+
+    async def fake_download(*args: object, **kwargs: object) -> bytes:
+        return payload
+
+    async def fake_meta(path: Path, song: SongInfo) -> bool:
+        metadata_paths.append(path)
+        return True
+
+    monkeypatch.setattr(delivery, "TEMP_PATH", tmp_path)
+    monkeypatch.setattr(delivery, "download", fake_download)
+    monkeypatch.setattr(delivery, "detect_audio_suffix", lambda path: ".flac")
+    monkeypatch.setattr(delivery, "write_song_meta", fake_meta)
+    monkeypatch.setattr(delivery, "_schedule_cleanup", lambda path, keep_sec: None)
+
+    class FakeBot:
+        bot_id = "onebot"
+
+        def __init__(self) -> None:
+            self.messages: list[object] = []
+
+        async def send(self, message: object) -> None:
+            self.messages.append(message)
+
+    bot = FakeBot()
+    song = SongInfo(platform="netease", song_id="1", name="晴天", singers="周杰伦", album="叶惠美")
+    reason = asyncio.run(
+        delivery.deliver_audio(
+            bot,
+            song,
+            "https://example.com/audio",
+            header="header",
+            send_voice=False,
+            send_file=True,
+            local_ref=False,
+            timeout=5,
+            keep_sec=10,
+            voice_max_mb=10,
+            voice_bitrate=128,
+            write_meta=True,
+        )
+    )
+
+    assert reason == ""
+    assert len(metadata_paths) == 1
+    assert metadata_paths[0].suffix == ".flac"
+    assert metadata_paths[0].exists()
+    assert not list(tmp_path.glob("*.part"))
+    assert bot.messages
 
 
 def test_netease_transport_error_is_not_account_failure(

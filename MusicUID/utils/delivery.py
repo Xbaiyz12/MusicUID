@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from uuid import uuid4
-from typing import Final
+from typing import Final, Protocol
 from pathlib import Path
 
-from gsuid_core.bot import Bot
 from gsuid_core.logger import logger
 from gsuid_core.models import Message
 from gsuid_core.segment import MessageSegment
@@ -22,15 +21,45 @@ _pending_cleanup: set[asyncio.Task[None]] = set()
 # 正常歌曲远超 10KB；更小的响应是无版权占位页或试听片段
 MIN_AUDIO_BYTES = 10 * 1024
 
+# mutagen 识别出的 MIME 到实际后缀；同一格式可能有多个 MIME 别名
+AUDIO_MIME_SUFFIXES: Final[dict[str, str]] = {
+    "audio/mp3": ".mp3",
+    "audio/x-mp3": ".mp3",
+    "audio/mpeg": ".mp3",
+    "audio/mpg": ".mp3",
+    "audio/x-mpeg": ".mp3",
+    "audio/flac": ".flac",
+    "audio/x-flac": ".flac",
+    "audio/mp4": ".m4a",
+    "audio/x-m4a": ".m4a",
+    "audio/mpeg4": ".m4a",
+    "audio/vorbis": ".ogg",
+    "audio/x-vorbis": ".ogg",
+    "audio/ogg": ".ogg",
+    "application/ogg": ".ogg",
+    "application/x-ogg": ".ogg",
+    "audio/wav": ".wav",
+    "audio/wave": ".wav",
+    "audio/x-wav": ".wav",
+    "audio/aiff": ".aiff",
+    "audio/x-aiff": ".aiff",
+    "audio/aac": ".aac",
+    "audio/x-aac": ".aac",
+    "audio/x-ape": ".ape",
+    "audio/x-wavpack": ".wv",
+    "audio/x-ms-wma": ".wma",
+    "audio/ac3": ".ac3",
+}
+
 
 def sniff_audio_suffix(payload: bytes) -> str:
-    """按文件头判断音频容器，避免把无损曲目发成 .mp3。
+    """按文件头签名判断音频容器，作为 mutagen 识别失败时的兜底。
 
     Args:
         payload: 下载到的音频字节。
 
     Returns:
-        带点的后缀；识别不出时退回 ``.mp3``。
+        带点的后缀；无法识别时返回空字符串。
     """
     head = payload[:12]
     if head[:4] == b"fLaC":
@@ -39,16 +68,54 @@ def sniff_audio_suffix(payload: bytes) -> str:
         return ".m4a"
     if head[:4] == b"OggS":
         return ".ogg"
-    if head[:4] == b"RIFF":
+    if head[:4] == b"RIFF" and head[8:12] == b"WAVE":
         return ".wav"
-    return ".mp3"
+    if head[:4] == b"FORM" and head[8:12] in (b"AIFF", b"AIFC"):
+        return ".aiff"
+    if head[:3] == b"ID3":
+        return ".mp3"
+    if len(head) >= 2 and head[0] == 0xFF:
+        # ADTS 的 layer 位固定为 00；MPEG 音频（MP3）则使用 01/10/11
+        if head[1] & 0xF6 == 0xF0:
+            return ".aac"
+        if head[1] & 0xE0 == 0xE0:
+            return ".mp3"
+    if head[:4] == b"MAC ":
+        return ".ape"
+    if head[:4] == b"wvpk":
+        return ".wv"
+    if head[:4] == b"\x30\x26\xb2\x75":
+        return ".wma"
+    if head[:2] == b"\x0b\x77":
+        return ".ac3"
+    return ""
+
+
+def detect_audio_suffix(path: Path) -> str:
+    """按文件实际内容识别音频后缀，优先使用 mutagen，签名兜底。"""
+    try:
+        from mutagen import File as MutagenFile, MutagenError
+
+        try:
+            audio = MutagenFile(path)
+        except (MutagenError, OSError):
+            audio = None
+        if audio is not None:
+            for mime in audio.mime:
+                suffix = AUDIO_MIME_SUFFIXES.get(mime)
+                if suffix:
+                    return suffix
+    except ImportError:
+        pass
+    try:
+        with path.open("rb") as audio_file:
+            return sniff_audio_suffix(audio_file.read(12))
+    except OSError:
+        return ""
 
 
 # ffmpeg 压缩上限：卡住时必须回收，否则协程永久挂起、孤儿进程继续写盘
 COMPRESS_TIMEOUT_SEC: Final[float] = 120.0
-
-# ffmpeg 写标签的上限：-c copy 只是改容器头，正常几秒内完成
-TAG_TIMEOUT_SEC: Final[float] = 30.0
 
 # 语音最低码率：再低就不是「音质差」而是听不清了
 MIN_VOICE_KBPS: Final[int] = 64
@@ -78,8 +145,16 @@ def _safe_file_name(song: SongInfo, suffix: str) -> str:
 
 # 这些渠道的适配器会把「无后缀的 base64 音频」当成 WAV 解析：AstrBot 的 qqofficial
 # 适配器传 default_suffix=".wav" 落盘后直接报 "file does not start with RIFF id"。
-# 对它们改发带 .mp3 后缀的 file:// 路径，适配器即可按真实格式转码成 silk。
+# 对它们改发带真实后缀的 file:// 路径，适配器即可按实际格式转码成 silk。
 LOCAL_PATH_BOTS: Final[frozenset[str]] = frozenset({"qq_official"})
+
+
+class BotSender(Protocol):
+    """deliver_audio 实际需要的 Bot 能力，便于测试和无副作用调用。"""
+
+    bot_id: str
+
+    async def send(self, message: Message | list[Message]) -> list[str] | None: ...
 
 
 def voice_segment(path: Path, bot_id: str, force_local: bool) -> Message:
@@ -177,10 +252,66 @@ async def compress_for_voice(path: Path, bitrate: int, keep_stereo: bool) -> Pat
     return out
 
 
-async def write_song_meta(path: Path, song: SongInfo) -> bool:
-    """把标题/歌手/专辑写进音频文件，右键属性就能看到。
+def _write_song_meta_sync(path: Path, song: SongInfo) -> bool:
+    """用 mutagen 原地写标签，按文件内容识别格式，不依赖文件后缀。"""
+    try:
+        from mutagen import File as MutagenFile, MutagenError
+        from mutagen.id3 import TALB, TIT2, TPE1, TPE2
+        from mutagen.mp3 import EasyMP3
+        from mutagen.flac import FLAC
+        from mutagen.wave import WAVE
+        from mutagen.easymp4 import EasyMP4
+        from mutagen.oggopus import OggOpus
+        from mutagen.oggvorbis import OggVorbis
+    except ImportError as e:
+        logger.warning(f"[MusicUID] 缺少 mutagen，跳过歌曲信息写入：{e}")
+        return False
 
-    用 ``-c copy`` 只改元数据、不重编码，对音质零损耗；没有 ffmpeg 时直接跳过。
+    try:
+        audio = MutagenFile(path, easy=True)
+        if audio is None:
+            logger.debug(f"[MusicUID] mutagen 无法识别音频格式：{path.suffix}")
+            return False
+        if isinstance(audio, WAVE):
+            if audio.tags is None:
+                audio.add_tags()
+            tags = audio.tags
+            if tags is None:
+                return False
+            for frame_id, frame_type, value in (
+                ("TIT2", TIT2, song.name),
+                ("TPE1", TPE1, song.singers),
+                ("TPE2", TPE2, song.singers),
+                ("TALB", TALB, song.album),
+            ):
+                if value:
+                    tags.setall(frame_id, [frame_type(encoding=3, text=[value])])
+                else:
+                    tags.delall(frame_id)
+        elif isinstance(audio, (EasyMP3, FLAC, EasyMP4, OggOpus, OggVorbis)):
+            for key, value in (
+                ("title", song.name),
+                ("artist", song.singers),
+                ("albumartist", song.singers),
+                ("album", song.album),
+            ):
+                if value:
+                    audio[key] = [value]
+        else:
+            logger.debug(f"[MusicUID] mutagen 暂不支持该标签类型：{type(audio).__name__}")
+            return False
+        audio.save()
+    except (MutagenError, OSError) as e:
+        logger.warning(f"[MusicUID] mutagen 写入歌曲信息失败：{e}")
+        return False
+    return True
+
+
+async def write_song_meta(path: Path, song: SongInfo) -> bool:
+    """把标题/歌手/专辑/专辑歌手写进音频文件，右键属性就能看到。
+
+    使用纯 Python 的 mutagen 原地修改标签，不重编码；``path`` 的后缀可以与
+    实际内容不同，mutagen 会按文件头识别容器。
 
     Args:
         path: 已落盘的音频文件。
@@ -189,54 +320,7 @@ async def write_song_meta(path: Path, song: SongInfo) -> bool:
     Returns:
         ``True`` 表示标签已写入。
     """
-    out = path.with_name(f"{path.stem}_m{path.suffix}")
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-i",
-            str(path),
-            "-c",
-            "copy",
-            "-metadata",
-            f"title={song.name}",
-            "-metadata",
-            f"artist={song.singers}",
-            "-metadata",
-            f"album={song.album}",
-            "-id3v2_version",
-            "3",
-            str(out),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-    except OSError as e:
-        logger.debug(f"[MusicUID] 写入歌曲信息失败：{e}")
-        out.unlink(missing_ok=True)
-        return False
-    try:
-        code = await asyncio.wait_for(proc.wait(), timeout=TAG_TIMEOUT_SEC)
-    except asyncio.TimeoutError:
-        # 卡住时必须回收，否则孤儿 ffmpeg 会一直占着文件句柄
-        proc.kill()
-        await proc.wait()
-        logger.debug("[MusicUID] ffmpeg 写标签超时，改用原始音频")
-        out.unlink(missing_ok=True)
-        return False
-    if code != 0 or not out.exists():
-        logger.debug(f"[MusicUID] ffmpeg 写标签失败（rc={code}）")
-        out.unlink(missing_ok=True)
-        return False
-    try:
-        out.replace(path)
-    except OSError as e:
-        logger.debug(f"[MusicUID] 替换带标签文件失败：{e}")
-        out.unlink(missing_ok=True)
-        return False
-    return True
+    return await asyncio.to_thread(_write_song_meta_sync, path, song)
 
 
 def _schedule_cleanup(path: Path, keep_sec: int) -> None:
@@ -257,7 +341,7 @@ def _schedule_cleanup(path: Path, keep_sec: int) -> None:
 
 
 async def deliver_audio(
-    bot: Bot,
+    bot: BotSender,
     song: SongInfo,
     audio_url: str,
     *,
@@ -291,8 +375,8 @@ async def deliver_audio(
         An empty string when the audio was delivered, otherwise a short
         user-facing reason describing what failed.
     """
-    # 临时文件保持 .mp3：语音链路（silk 转码）只认这个后缀
-    audio_path = TEMP_PATH / f"{uuid4().hex}.mp3"
+    # 先落成中性临时文件，识别真实容器后再改名；后续发送与转语音都用真实后缀
+    temp_path = TEMP_PATH / f"{uuid4().hex}.part"
     try:
         payload = await download(audio_url, timeout)
     except Exception as e:
@@ -303,11 +387,22 @@ async def deliver_audio(
     if len(payload) < MIN_AUDIO_BYTES:
         return "音频下载失败：该歌曲可能无版权或需要 VIP"
     try:
-        await asyncio.to_thread(audio_path.write_bytes, payload)
+        await asyncio.to_thread(temp_path.write_bytes, payload)
     except OSError as e:
         logger.warning(f"[MusicUID] 音频落盘失败：{e}")
         return "音频下载失败：临时文件写入失败"
-    file_name = _safe_file_name(song, sniff_audio_suffix(payload))
+    suffix = await asyncio.to_thread(detect_audio_suffix, temp_path)
+    if not suffix:
+        temp_path.unlink(missing_ok=True)
+        return "音频下载失败：下载内容不是可识别的音频格式"
+    audio_path = temp_path.with_suffix(suffix)
+    try:
+        await asyncio.to_thread(temp_path.replace, audio_path)
+    except OSError as e:
+        temp_path.unlink(missing_ok=True)
+        logger.warning(f"[MusicUID] 音频改名为 {suffix} 失败：{e}")
+        return "音频下载失败：临时文件改名失败"
+    file_name = _safe_file_name(song, suffix)
     # 写标签要在语音压缩之前：压缩会重新编码，标签会丢
     if write_meta:
         await write_song_meta(audio_path, song)

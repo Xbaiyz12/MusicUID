@@ -89,8 +89,8 @@ CONFIG_DEFAULT: Dict[str, GSC] = {
     ),
     "write_meta": GsBoolConfig(
         "写入歌曲信息",
-        "用 ffmpeg 把标题/歌手/专辑写进音频文件（-c copy 不重编码，无损），"
-        "发送后右键属性就能看到。缺 ffmpeg 时自动跳过",
+        "用内置 mutagen 把标题/歌手/专辑/专辑歌手写进音频文件（纯 Python，不重编码），"
+        "发送后右键属性就能看到，不依赖 ffmpeg",
         True,
     ),
     "voice_max_mb": GsIntConfig(
