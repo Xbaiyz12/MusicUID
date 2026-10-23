@@ -53,8 +53,8 @@
 | `send_voice` / `send_file` | `true` / `false` | 发语音 / 额外再发一份文件 |
 | `netease_level` | `exhigh` | 网易云音质；选 `lossless` 会按 flac 取流，文件名也是 `.flac` |
 | `download_hint` | `true` | 点歌后先回一句「正在准备」；QQ 官方通道每次回复算额度，介意可关 |
-| `write_meta` | `true` | 用 ffmpeg 把标题/歌手/专辑写进音频（不重编码）；缺 ffmpeg 自动跳过 |
-| `voice_max_mb` | `10` | 语音体积上限；官机软限 20MB（最大可填 20），普通 QQ 渠道更严 |
+| `write_meta` | `true` | 用内置 mutagen 把标题/歌手/专辑/专辑歌手写进音频（纯 Python，不重编码，支持 FLAC） |
+| `voice_max_mb` | `10` | 语音体积上限；超过时用 ffmpeg 压缩，官机软限 20MB（最大可填 20），普通 QQ 渠道更严 |
 | `render_card` | `true` | 图片卡片；关掉则全部走纯文本 |
 | `custom_api_url` | 空 | 自建音源地址，留空即关闭 |
 | `custom_api_priority` | `fallback_only` | `custom_first` 则优先走自建 |
