@@ -22,8 +22,33 @@ _pending_cleanup: set[asyncio.Task[None]] = set()
 # 正常歌曲远超 10KB；更小的响应是无版权占位页或试听片段
 MIN_AUDIO_BYTES = 10 * 1024
 
+
+def sniff_audio_suffix(payload: bytes) -> str:
+    """按文件头判断音频容器，避免把无损曲目发成 .mp3。
+
+    Args:
+        payload: 下载到的音频字节。
+
+    Returns:
+        带点的后缀；识别不出时退回 ``.mp3``。
+    """
+    head = payload[:12]
+    if head[:4] == b"fLaC":
+        return ".flac"
+    if head[4:8] == b"ftyp":
+        return ".m4a"
+    if head[:4] == b"OggS":
+        return ".ogg"
+    if head[:4] == b"RIFF":
+        return ".wav"
+    return ".mp3"
+
+
 # ffmpeg 压缩上限：卡住时必须回收，否则协程永久挂起、孤儿进程继续写盘
 COMPRESS_TIMEOUT_SEC: Final[float] = 120.0
+
+# ffmpeg 写标签的上限：-c copy 只是改容器头，正常几秒内完成
+TAG_TIMEOUT_SEC: Final[float] = 30.0
 
 # 语音最低码率：再低就不是「音质差」而是听不清了
 MIN_VOICE_KBPS: Final[int] = 64
@@ -152,6 +177,68 @@ async def compress_for_voice(path: Path, bitrate: int, keep_stereo: bool) -> Pat
     return out
 
 
+async def write_song_meta(path: Path, song: SongInfo) -> bool:
+    """把标题/歌手/专辑写进音频文件，右键属性就能看到。
+
+    用 ``-c copy`` 只改元数据、不重编码，对音质零损耗；没有 ffmpeg 时直接跳过。
+
+    Args:
+        path: 已落盘的音频文件。
+        song: 歌曲元数据。
+
+    Returns:
+        ``True`` 表示标签已写入。
+    """
+    out = path.with_name(f"{path.stem}_m{path.suffix}")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(path),
+            "-c",
+            "copy",
+            "-metadata",
+            f"title={song.name}",
+            "-metadata",
+            f"artist={song.singers}",
+            "-metadata",
+            f"album={song.album}",
+            "-id3v2_version",
+            "3",
+            str(out),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+    except OSError as e:
+        logger.debug(f"[MusicUID] 写入歌曲信息失败：{e}")
+        out.unlink(missing_ok=True)
+        return False
+    try:
+        code = await asyncio.wait_for(proc.wait(), timeout=TAG_TIMEOUT_SEC)
+    except asyncio.TimeoutError:
+        # 卡住时必须回收，否则孤儿 ffmpeg 会一直占着文件句柄
+        proc.kill()
+        await proc.wait()
+        logger.debug("[MusicUID] ffmpeg 写标签超时，改用原始音频")
+        out.unlink(missing_ok=True)
+        return False
+    if code != 0 or not out.exists():
+        logger.debug(f"[MusicUID] ffmpeg 写标签失败（rc={code}）")
+        out.unlink(missing_ok=True)
+        return False
+    try:
+        out.replace(path)
+    except OSError as e:
+        logger.debug(f"[MusicUID] 替换带标签文件失败：{e}")
+        out.unlink(missing_ok=True)
+        return False
+    return True
+
+
 def _schedule_cleanup(path: Path, keep_sec: int) -> None:
     """Delete a temporary file later, never before the sender read it.
 
@@ -182,6 +269,7 @@ async def deliver_audio(
     keep_sec: int,
     voice_max_mb: int,
     voice_bitrate: int,
+    write_meta: bool,
 ) -> str:
     """Download the audio and send it as voice and/or file.
 
@@ -197,13 +285,14 @@ async def deliver_audio(
         keep_sec: How long the temporary file is kept after sending.
         voice_max_mb: Compress for voice when the file exceeds this size.
         voice_bitrate: Target mp3 bitrate (kbps) used by that compression.
+        write_meta: Whether to write title/artist/album into the file.
 
     Returns:
         An empty string when the audio was delivered, otherwise a short
         user-facing reason describing what failed.
     """
-    suffix = ".mp3"
-    audio_path = TEMP_PATH / f"{uuid4().hex}{suffix}"
+    # 临时文件保持 .mp3：语音链路（silk 转码）只认这个后缀
+    audio_path = TEMP_PATH / f"{uuid4().hex}.mp3"
     try:
         payload = await download(audio_url, timeout)
     except Exception as e:
@@ -218,7 +307,10 @@ async def deliver_audio(
     except OSError as e:
         logger.warning(f"[MusicUID] 音频落盘失败：{e}")
         return "音频下载失败：临时文件写入失败"
-    file_name = _safe_file_name(song, suffix)
+    file_name = _safe_file_name(song, sniff_audio_suffix(payload))
+    # 写标签要在语音压缩之前：压缩会重新编码，标签会丢
+    if write_meta:
+        await write_song_meta(audio_path, song)
     # QQ 等平台对语音消息的体积限制很严：整首 320kbps 会被静默丢弃，先压小再发。
     # 压到多低由时长与体积上限算出来，不做一刀切，否则控制台里的音质档位白设
     voice_path = audio_path

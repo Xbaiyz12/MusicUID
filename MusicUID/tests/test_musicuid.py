@@ -1496,6 +1496,48 @@ def test_split_sections_accepts_inline_headings() -> None:
     assert flat[0].lines == ("第一行", "第二行")
 
 
+def test_sniff_audio_suffix_detects_container() -> None:
+    """文件名后缀必须跟真实容器一致，否则无损曲目会被发成 .mp3。"""
+    from MusicUID.MusicUID.utils.delivery import sniff_audio_suffix
+
+    assert sniff_audio_suffix(b"fLaC" + b"\x00" * 8) == ".flac"
+    assert sniff_audio_suffix(b"\x00\x00\x00\x20ftypM4A " + b"\x00" * 4) == ".m4a"
+    assert sniff_audio_suffix(b"OggS" + b"\x00" * 8) == ".ogg"
+    assert sniff_audio_suffix(b"RIFF" + b"\x00" * 4 + b"WAVE") == ".wav"
+    assert sniff_audio_suffix(b"ID3" + b"\x00" * 9) == ".mp3"
+    # 识别不出的内容仍按 mp3 处理，不能因为嗅探失败就没后缀
+    assert sniff_audio_suffix(b"") == ".mp3"
+
+
+def test_container_for_lossless_is_flac() -> None:
+    """选无损必须让服务端下发 flac；encodeType=mp3 会把无损强制转成 mp3。"""
+    from MusicUID.MusicUID.utils.provider.netease import _container_for
+
+    assert _container_for("lossless") == "flac"
+    assert _container_for("hires") == "flac"
+    assert _container_for("exhigh") == "mp3"
+    assert _container_for("standard") == "mp3"
+
+
+def test_write_song_meta_skips_without_ffmpeg(
+    tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """没有 ffmpeg 时必须静默跳过，不能挡住音频发送，也不能弄丢原文件。"""
+    from MusicUID.MusicUID.utils import delivery
+    from MusicUID.MusicUID.utils.provider import SongInfo
+
+    async def boom(*args: object, **kwargs: object) -> object:
+        raise FileNotFoundError("ffmpeg 不存在")
+
+    monkeypatch.setattr(delivery.asyncio, "create_subprocess_exec", boom)
+    audio = tmp_path / "a.mp3"
+    audio.write_bytes(b"ID3" + b"\x00" * 64)
+    song = SongInfo(platform="netease", song_id="1", name="n", singers="s")
+
+    assert asyncio.run(delivery.write_song_meta(audio, song)) is False
+    assert audio.exists()
+
+
 def test_netease_transport_error_is_not_account_failure(
     tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:

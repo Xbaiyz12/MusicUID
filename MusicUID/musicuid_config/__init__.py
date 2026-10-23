@@ -82,6 +82,17 @@ CONFIG_DEFAULT: Dict[str, GSC] = {
     ),
     "enable_resolve": GsBoolConfig("链接自动解析", "自动识别聊天中的网易云分享链接并播放", True),
     "download_timeout": GsIntConfig("下载超时", "音频下载超时时间（秒）", 60, 300),
+    "download_hint": GsBoolConfig(
+        "下载提示",
+        "点歌后先回一句「正在准备」再发音频，避免用户以为命令没触发。QQ 官方通道每次回复都算额度，介意可关掉",
+        True,
+    ),
+    "write_meta": GsBoolConfig(
+        "写入歌曲信息",
+        "用 ffmpeg 把标题/歌手/专辑写进音频文件（-c copy 不重编码，无损），"
+        "发送后右键属性就能看到。缺 ffmpeg 时自动跳过",
+        True,
+    ),
     "voice_max_mb": GsIntConfig(
         "语音体积上限",
         "语音文件超过该体积时才会压缩，调大能保留更高码率。QQ 官方机器人软限 20MB、推荐填 10"

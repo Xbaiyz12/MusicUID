@@ -51,7 +51,9 @@
 | `default_platform` | `netease` | 未指定平台时使用 |
 | `max_list` | `5` | 每平台条数（最大 10） |
 | `send_voice` / `send_file` | `true` / `false` | 发语音 / 额外再发一份文件 |
-| `netease_level` | `exhigh` | 网易云音质；群里发不出去就调成 `standard` |
+| `netease_level` | `exhigh` | 网易云音质；选 `lossless` 会按 flac 取流，文件名也是 `.flac` |
+| `download_hint` | `true` | 点歌后先回一句「正在准备」；QQ 官方通道每次回复算额度，介意可关 |
+| `write_meta` | `true` | 用 ffmpeg 把标题/歌手/专辑写进音频（不重编码）；缺 ffmpeg 自动跳过 |
 | `voice_max_mb` | `10` | 语音体积上限；官机软限 20MB（最大可填 20），普通 QQ 渠道更严 |
 | `render_card` | `true` | 图片卡片；关掉则全部走纯文本 |
 | `custom_api_url` | 空 | 自建音源地址，留空即关闭 |

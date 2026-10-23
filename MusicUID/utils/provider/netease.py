@@ -24,6 +24,19 @@ WEAPI_PLAY_URL: Final[str] = "https://music.163.com/weapi/song/enhance/player/ur
 # 可选档位（由配置项 netease_level 选择），standard 始终作为兜底
 QUALITY_LEVELS: Final[tuple[str, ...]] = ("standard", "exhigh", "lossless")
 
+
+def _container_for(level: str) -> str:
+    """网易云按 encodeType 决定下发容器：无损档位必须用 flac，否则仍给 mp3。
+
+    Args:
+        level: 音质档位。
+
+    Returns:
+        weapi 的 encodeType 取值。
+    """
+    return "flac" if level in ("lossless", "hires") else "mp3"
+
+
 # 网易 web 接口对无 Referer 的请求可能返回 403
 HEADERS: Final[dict[str, str]] = {"Referer": "https://music.163.com/"}
 
@@ -241,7 +254,8 @@ class NeteaseProvider:
         url = await self._weapi_play_url(song)
         if url:
             return url
-        target = f"{OUTER_URL}?id={song.song_id}.mp3"
+        # 不带 .mp3 后缀才能拿到原格式；加上它服务端会强制转码成 mp3
+        target = f"{OUTER_URL}?id={song.song_id}"
         status, location = await get_location(target)
         # 可播放有两种形态：302 跳到 CDN，或 200 直接返回音频流（此时没有 Location）。
         # 403/429 之类的前置拒绝两者都不是，必须区分开，否则会把错误页当成歌曲下发
@@ -292,7 +306,7 @@ class NeteaseProvider:
                 payload: dict[str, object] = {
                     "ids": f"[{song.song_id}]",
                     "level": level,
-                    "encodeType": "mp3",
+                    "encodeType": _container_for(level),
                     "csrf_token": "",
                 }
                 try:

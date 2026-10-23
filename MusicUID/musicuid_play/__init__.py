@@ -127,6 +127,9 @@ async def play_song(bot: Bot, song: SongInfo) -> None:
     if not provider.supports_play:
         await bot.send(f"{provider.display_name} 暂不支持音频下发，只提供搜索与信息展示")
         return
+    # 取流加下载可能要十几秒，先回一句，免得用户以为命令没触发
+    if music_config.get_config("download_hint").data:
+        await bot.send(f"⏬ 正在准备《{song.name}》，稍等…")
     try:
         audio_url = await provider.play_url(song)
     except MusicRequestError as e:
@@ -158,6 +161,7 @@ async def play_song(bot: Bot, song: SongInfo) -> None:
         keep_sec=music_config.get_config("keep_temp_sec").data,
         voice_max_mb=music_config.get_config("voice_max_mb").data,
         voice_bitrate=music_config.get_config("voice_bitrate").data,
+        write_meta=music_config.get_config("write_meta").data,
     )
     if reason:
         await bot.send(reason)

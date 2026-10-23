@@ -133,9 +133,7 @@ class KugouProvider:
             async def fetch(album: str, probe: SongInfo) -> None:
                 async with sem:
                     try:
-                        detail = await asyncio.wait_for(
-                            self.detail(probe.song_id), timeout=_COVER_FILL_TIMEOUT_S
-                        )
+                        detail = await asyncio.wait_for(self.detail(probe.song_id), timeout=_COVER_FILL_TIMEOUT_S)
                     except Exception:  # noqa: BLE001 - 封面补齐失败不应影响搜索结果
                         return
                     if detail and detail.cover_url:
