@@ -196,6 +196,34 @@ def pick_voice_bitrate(max_kbps: int, limit_bytes: int, duration_sec: int) -> in
     return max(MIN_VOICE_KBPS, min(max_kbps, by_size))
 
 
+_ffmpeg_cmd: str | None = None
+
+
+def _ffmpeg_exe() -> str:
+    """返回可用的 ffmpeg 命令，优先用 imageio-ffmpeg 自带的二进制。
+
+    Debian slim 等系统默认不带 ffmpeg，只依赖系统环境会让语音压缩静默失效；
+    取不到自带二进制时回退 PATH 里的 ``ffmpeg``，保持旧行为。
+
+    Returns:
+        可执行文件路径，或裸命令名。
+    """
+    global _ffmpeg_cmd
+    if _ffmpeg_cmd is not None:
+        return _ffmpeg_cmd
+    try:
+        import imageio_ffmpeg
+    except ImportError:
+        _ffmpeg_cmd = "ffmpeg"
+        return _ffmpeg_cmd
+    try:
+        _ffmpeg_cmd = imageio_ffmpeg.get_ffmpeg_exe()
+    except (RuntimeError, OSError) as e:
+        logger.debug(f"[MusicUID] imageio-ffmpeg 不可用，回退系统 ffmpeg：{e}")
+        _ffmpeg_cmd = "ffmpeg"
+    return _ffmpeg_cmd
+
+
 async def compress_for_voice(path: Path, bitrate: int, keep_stereo: bool) -> Path | None:
     """Shrink an audio file with ffmpeg so it fits platform voice limits.
 
@@ -215,7 +243,7 @@ async def compress_for_voice(path: Path, bitrate: int, keep_stereo: bool) -> Pat
     channel_args = [] if keep_stereo else ["-ac", "1"]
     try:
         proc = await asyncio.create_subprocess_exec(
-            "ffmpeg",
+            _ffmpeg_exe(),
             "-y",
             "-i",
             str(path),

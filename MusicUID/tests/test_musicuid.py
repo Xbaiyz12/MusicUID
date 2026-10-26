@@ -1574,6 +1574,21 @@ def test_write_song_meta_uses_mutagen_for_flac(
     assert audio.read_bytes().startswith(b"fLaC")
 
 
+def test_ffmpeg_exe_prefers_bundled_and_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    """优先用 imageio-ffmpeg 自带二进制；它缺失时必须回退系统 ffmpeg 而不是崩。"""
+    from MusicUID.MusicUID.utils import delivery
+
+    monkeypatch.setattr(delivery, "_ffmpeg_cmd", None)
+    bundled = delivery._ffmpeg_exe()
+    assert bundled
+    assert "imageio_ffmpeg" in bundled or bundled == "ffmpeg"
+
+    # 模拟未安装 imageio-ffmpeg（sys.modules 置 None 会让 import 直接抛 ImportError）
+    monkeypatch.setattr(delivery, "_ffmpeg_cmd", None)
+    monkeypatch.setitem(sys.modules, "imageio_ffmpeg", None)
+    assert delivery._ffmpeg_exe() == "ffmpeg"
+
+
 def test_deliver_audio_renames_before_metadata_and_send(
     tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:

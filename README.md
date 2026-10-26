@@ -84,3 +84,9 @@ ruff check gsuid_core/plugins/MusicUID
 ## 许可
 
 MIT。音乐版权归各平台与权利人所有，本插件仅供学习交流使用。
+
+## 运行依赖
+
+- `mutagen`：纯 Python 写音频标签（标题 / 歌手 / 专辑），不重编码
+- `imageio-ffmpeg`：自带 ffmpeg 二进制（约 84MB），供语音压缩使用；
+  取不到时自动回退系统 `ffmpeg`。该包为 BSD-2，其内置 ffmpeg 为 LGPL-2.1+
