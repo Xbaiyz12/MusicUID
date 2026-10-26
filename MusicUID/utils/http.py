@@ -65,6 +65,9 @@ def get_client() -> httpx.AsyncClient:
             timeout=httpx.Timeout(DEFAULT_TIMEOUT),
             headers={"User-Agent": USER_AGENT},
             follow_redirects=True,
+            # 少走系统代理：httpx 只在建 client 时读一次代理配置并固化下来，
+            # core 常驻后 Clash 一关，之后所有请求都会 ConnectError（三家同时断）
+            trust_env=False,
         )
     return _client
 
