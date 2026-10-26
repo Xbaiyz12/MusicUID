@@ -247,6 +247,10 @@ async def compress_for_voice(path: Path, bitrate: int, keep_stereo: bool) -> Pat
             "-y",
             "-i",
             str(path),
+            # 只取音频流：无损容器常带封面图，剥离掉避免多解一路
+            "-vn",
+            "-map",
+            "a:0",
             *channel_args,
             "-b:a",
             f"{bitrate}k",
