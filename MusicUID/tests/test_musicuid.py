@@ -1671,3 +1671,70 @@ def test_netease_transport_error_is_not_account_failure(
     item = accounts.load_accounts("netease")[0]
     assert item.fail_count == 0
     assert item.active is True
+
+
+def test_qq_vip_check_uses_paid_song(monkeypatch: pytest.MonkeyPatch) -> None:
+    """QQ 音乐会员靠付费专享曲取流反推：有直链算会员，104003 算无权限。"""
+    from MusicUID.MusicUID.utils import vip
+
+    responses = iter(
+        [
+            {"req_1": {"data": {"midurlinfo": [{"purl": "http://x/a.mp3", "result": 0}]}}},
+            {"req_1": {"data": {"midurlinfo": [{"purl": "", "result": 104003}]}}},
+            # 曲目下架（101404）不是「无会员」，必须算没结论
+            {"req_1": {"data": {"midurlinfo": [{"purl": "", "result": 101404}]}}},
+        ]
+    )
+
+    async def fake(*args: object, **kwargs: object) -> object:
+        return next(responses)
+
+    monkeypatch.setattr(vip, "post_json", fake)
+    cookie = "uin=675457315; qm_keyst=abc"
+    assert asyncio.run(vip.check_qq_vip(cookie)) == (True, "", True)
+    assert asyncio.run(vip.check_qq_vip(cookie)) == (False, "", True)
+    assert asyncio.run(vip.check_qq_vip(cookie)) == (False, "", False)
+
+    # 没 uin 就定位不到账号，按「没结论」处理，不能据此挂起
+    assert asyncio.run(vip.check_qq_vip("qm_keyst=abc")) == (False, "", False)
+
+
+def test_revive_qq_account_checks_membership(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """挂起的 QQ 号按会员复查，没有会员就继续挂着，不能无条件放行。"""
+    from MusicUID.MusicUID import musicuid_tasks
+    from MusicUID.MusicUID.utils import vip, accounts
+
+    monkeypatch.setattr(accounts, "ACCOUNTS_PATH", tmp_path / "accounts.json")
+    monkeypatch.setattr(accounts, "LEGACY_NETEASE_PATH", tmp_path / "legacy.json")
+    assert accounts.save_account("qq", "小号", "uin=123456; qm_keyst=abc", active=False) is True
+
+    async def no_vip(cookie: str) -> tuple[bool, str, bool]:
+        return False, "", True
+
+    monkeypatch.setattr(vip, "check_qq_vip", no_vip)
+    assert asyncio.run(musicuid_tasks._revive_suspended_accounts()) == []
+    assert accounts.load_accounts("qq")[0].active is False
+
+    async def has_vip(cookie: str) -> tuple[bool, str, bool]:
+        return True, "", True
+
+    monkeypatch.setattr(vip, "check_qq_vip", has_vip)
+    assert asyncio.run(musicuid_tasks._revive_suspended_accounts()) == ["qq/小号"]
+    assert accounts.load_accounts("qq")[0].active is True
+
+
+def test_resave_keeps_suspended_state(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """凭据续期重写账号池不能把挂起的号重新启用，否则会员校验就被绕过了。"""
+    from MusicUID.MusicUID.utils import accounts
+
+    monkeypatch.setattr(accounts, "ACCOUNTS_PATH", tmp_path / "accounts.json")
+    monkeypatch.setattr(accounts, "LEGACY_NETEASE_PATH", tmp_path / "legacy.json")
+    assert accounts.save_account("qq", "小号", "uin=123456; qm_keyst=abc", active=False) is True
+
+    # 续期只换 cookie，沿用原启用状态
+    assert accounts.save_account("qq", "小号", "uin=123456; qm_keyst=refreshed") is True
+    assert accounts.load_accounts("qq")[0].active is False
+
+    # 没有历史状态的新号按启用处理
+    assert accounts.save_account("qq", "新号", "uin=999888; qm_keyst=x") is True
+    assert accounts.load_accounts("qq")[1].active is True

@@ -274,12 +274,12 @@ async def notify_task_result(target: str, text: str) -> bool:
 
 
 async def _revive_suspended_accounts() -> list[str]:
-    """复查挂起的网易云账号，已续费有 VIP 的就重新启用。
+    """复查挂起的账号，已续费有会员的就重新启用。
 
     Returns:
         本次被启用的账号名列表。
     """
-    from ..utils.vip import check_netease_vip
+    from ..utils.vip import check_qq_vip, check_netease_vip
     from ..utils.accounts import account_key, load_accounts, activate_account
 
     revived: list[str] = []
@@ -289,13 +289,19 @@ async def _revive_suspended_accounts() -> list[str]:
         vip, _, checked = await check_netease_vip(item.cookie)
         if checked and vip and activate_account("netease", account_key("netease", item.cookie)):
             revived.append(item.name)
-    # QQ / 酷狗没有可靠的 VIP 接口，改成每天给一次重试机会；再失败够数会重新挂起
-    for platform in ("qq", "kugou"):
-        for item in load_accounts(platform):
-            if item.active:
-                continue
-            if activate_account(platform, account_key(platform, item.cookie)):
-                revived.append(f"{platform}/{item.name}")
+    # QQ 音乐用付费专享曲目取流反推会员，判据可靠就按会员复查
+    for item in load_accounts("qq"):
+        if item.active:
+            continue
+        vip, _, checked = await check_qq_vip(item.cookie)
+        if checked and vip and activate_account("qq", account_key("qq", item.cookie)):
+            revived.append(f"qq/{item.name}")
+    # 酷狗没有探测接口，每天给一次重试机会；再失败够数会重新挂起
+    for item in load_accounts("kugou"):
+        if item.active:
+            continue
+        if activate_account("kugou", account_key("kugou", item.cookie)):
+            revived.append(f"kugou/{item.name}")
     return revived
 
 

@@ -669,7 +669,7 @@ async def handle_set_cookie(bot: Bot, ev: Event) -> None:
             return
         music_config.set_config("qqmusic_cookie", formatted)
         # 手动导入的号也入账号池，才能参与轮换取流
-        saved, _ = await _save_platform_account("qq", "", formatted)
+        saved, active = await _save_platform_account("qq", "", formatted)
         logger.info("[MusicUID] 已成功更新 QQ 音乐 Cookie")
         if not saved:
             await bot.send(
@@ -677,7 +677,10 @@ async def handle_set_cookie(bot: Bot, ev: Event) -> None:
                 "请确认写的是 `uin=数字`，而不是 `p_uin=` 或空值（值里带空格也会被拒）。"
             )
             return
-        await bot.send(f"✅ 已成功更新【QQ 音乐】Cookie 凭据！\n已格式化提取核心票据：\n{_mask_cookie(formatted)}")
+        state = "已启用，参与取流轮换" if active else "没有会员权限，已挂起（续费后自动重新启用）"
+        await bot.send(
+            f"✅ 已成功更新【QQ 音乐】Cookie 凭据！\n• 状态：{state}\n已格式化提取核心票据：\n{_mask_cookie(formatted)}"
+        )
         return
 
     if cmd in ("网易云cookie", "网易cookie"):
@@ -753,9 +756,14 @@ async def handle_set_cookie(bot: Bot, ev: Event) -> None:
         await bot.send("❌ 保存凭据失败，请检查插件配置是否完整")
         return
     # 与专用分支保持一致：通用写法也要入账号池，否则只有配置项那一个号
-    saved, _ = await _save_platform_account(provider.platform_name, "", cookie_val)
+    saved, active = await _save_platform_account(provider.platform_name, "", cookie_val)
     logger.info(f"[MusicUID] 已成功更新 {provider.display_name} Cookie")
-    tail = "" if saved else "\n⚠️ 但没能加入账号池（凭据缺少账号标识字段）。"
+    if not saved:
+        tail = "\n⚠️ 但没能加入账号池（凭据缺少账号标识字段）。"
+    elif active:
+        tail = ""
+    else:
+        tail = "\n• 状态：没有会员权限，已挂起（续费后自动重新启用）"
     await bot.send(f"✅ 已成功更新【{provider.display_name}】Cookie 凭据！{tail}")
 
 
@@ -887,12 +895,15 @@ async def _poll_login_status(
                 return
             logger.info(f"[MusicUID] {provider.display_name} 扫码登录成功，凭证已保存")
             # 三家扫码结果都入账号池，多号轮换取流才有意义
+            active = True
             if provider.platform_name in ("netease", "kugou", "qq"):
-                await _save_platform_account(provider.platform_name, session.nickname or "", session.cookie)
+                _, active = await _save_platform_account(provider.platform_name, session.nickname or "", session.cookie)
+            if active:
+                state = "凭证已自动保存并实时生效，现在点歌可畅享 VIP 歌曲与高音质！"
+            else:
+                state = "凭证已保存，但该账号没有会员权限，暂时挂起（续费后自动重新启用）"
             success_tip = (
-                f"🎉【{provider.display_name}】扫码登录成功！\n"
-                f"• 用户: {session.nickname or '已登录'}\n"
-                "• 状态: 凭证已自动保存并实时生效，现在点歌可畅享 VIP 歌曲与高音质！"
+                f"🎉【{provider.display_name}】扫码登录成功！\n• 用户: {session.nickname or '已登录'}\n• 状态: {state}"
             )
             await bot.send(success_tip)
             return
@@ -917,7 +928,8 @@ async def _poll_login_status(
 async def _save_platform_account(platform: str, name: str, cookie: str) -> tuple[bool, bool]:
     """把某平台凭据存进账号池，并同步一份到配置项保持兼容。
 
-    网易云入库前先验 VIP：没 VIP 的账号只挂起，不参与取流轮换。
+    网易云与 QQ 音乐入库前先验 VIP：没 VIP 的账号只挂起，不参与取流轮换。
+    酷狗没有可用的会员探测接口，按可用处理。
 
     Args:
         platform: 平台标识。
@@ -927,7 +939,7 @@ async def _save_platform_account(platform: str, name: str, cookie: str) -> tuple
     Returns:
         ``(是否保存成功, 是否已启用)``。
     """
-    from ..utils.vip import check_netease_vip
+    from ..utils.vip import check_qq_vip, check_netease_vip
     from ..utils.accounts import save_account
 
     active = True
@@ -937,6 +949,9 @@ async def _save_platform_account(platform: str, name: str, cookie: str) -> tuple
         active = vip or not checked
         if not name:
             name = nick
+    elif platform == "qq":
+        vip, _, checked = await check_qq_vip(cookie)
+        active = vip or not checked
     if not save_account(platform, name, cookie, active=active):
         return False, False
     music_config.set_config(_cookie_config_key(platform), cookie)
@@ -995,11 +1010,12 @@ async def handle_account_list(bot: Bot, ev: Event) -> None:
         active_count = sum(1 for item in accounts if item.active)
         lines = [f"🎵【{title}】共 {len(accounts)} 个，其中 {active_count} 个已启用："]
         lines.extend(
-            f"  {index}. {item.name}（{_mask_cookie(item.cookie)}）{'' if item.active else '  ⏸ 挂起（无 VIP）'}"
+            f"  {index}. {item.name}（{_mask_cookie(item.cookie)}）{'' if item.active else '  ⏸ 挂起（不参与取流）'}"
             for index, item in enumerate(accounts, start=1)
         )
         sections.append("\n".join(lines))
     sections.append("➕ 加号：「网易云登录」/「酷狗登录」扫码，或「网易云登录 <手机号>」验证码")
+    sections.append("⏸ 挂起的账号不参与取流：续费或重新登录后会自动恢复")
     await send_text_card(bot, "\n\n".join(sections), "音乐账号池")
 
 

@@ -273,14 +273,16 @@ def load_accounts(platform: str) -> list[MusicAccount]:
     return _read_all().get(platform, [])
 
 
-def save_account(platform: str, name: str, cookie: str, active: bool = True) -> bool:
-    """保存一个账号；同平台的同一个账号只保留一条（更新备注名与启用状态）。
+def save_account(platform: str, name: str, cookie: str, active: bool | None = None) -> bool:
+    """保存一个账号；同平台的同一个账号只保留一条，不新增重复条目。
 
     Args:
         platform: 平台标识。
         name: 备注名，留空则自动编号。
         cookie: 该平台的 Cookie 串或裸凭据值。
         active: 是否启用；``False`` 表示挂起，不参与取流轮换。
+            ``None`` 表示保持原有状态（新号按启用处理），凭据续期这类
+            不该改动启用状态的写入要传 ``None``。
 
     Returns:
         是否保存成功。
@@ -290,13 +292,21 @@ def save_account(platform: str, name: str, cookie: str, active: bool = True) -> 
     if not key:
         return False
     data = _read_all()
+    previous = next(
+        (item for item in data.get(platform, []) if account_key(platform, item.cookie) == key),
+        None,
+    )
     kept = [item for item in data.get(platform, []) if account_key(platform, item.cookie) != key]
+    if active is None:
+        enabled = previous.active if previous is not None else True
+    else:
+        enabled = active
     kept.append(
         MusicAccount(
             name=name.strip() or f"账号{len(kept) + 1}",
             cookie=normalized,
             added_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
-            active=active,
+            active=enabled,
         )
     )
     data[platform] = kept
