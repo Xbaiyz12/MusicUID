@@ -681,6 +681,19 @@ def test_iter_music_cards_from_json_segment() -> None:
     assert cards[0].singers == "周杰伦"
 
 
+def test_iter_music_cards_from_plain_json_string() -> None:
+    """AstrBot 适配器把整个卡片序列化成字符串上报，这种形态也要认。"""
+    raw = (
+        '{"app":"com.tencent.music.lua","meta":{"music":{"title":"晴天","desc":"周杰伦",'
+        '"jumpUrl":"https://y.qq.com/n/ryqq/songDetail/0039MnYb0qxYhV"}}}'
+    )
+    ev = Event(content=[Message(type="json", data=raw)])
+    cards = resolve_module.iter_music_cards(ev)
+    assert len(cards) == 1
+    assert cards[0].songmid == "0039MnYb0qxYhV"
+    assert cards[0].title == "晴天"
+
+
 def test_iter_music_cards_ignores_other_cards() -> None:
     """小程序等其它卡片不能被误判成歌曲。"""
     raw = '{"app":"com.tencent.miniapp_01","meta":{"detail_1":{"title":"某小程序"}}}'
