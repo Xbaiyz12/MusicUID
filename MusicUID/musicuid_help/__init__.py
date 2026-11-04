@@ -94,7 +94,7 @@ HELP_SECTIONS: Final[tuple[HelpSection, ...]] = (
     ),
     HelpSection(
         "链接解析与配置",
-        (HelpItem("发送音乐分享链接", "自动解析网易云 / QQ / 酷狗单曲或歌单并播放，QQ 音乐卡片同样支持", "自动解析"),),
+        (HelpItem("发送音乐分享链接", "自动解析网易云 / QQ / 酷狗单曲或歌单并播放", "自动解析"),),
         theme="link",
     ),
 )
