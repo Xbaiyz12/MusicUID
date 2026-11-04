@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import json
+from dataclasses import dataclass
 from urllib.parse import urlparse
 
 from gsuid_core.sv import SV
@@ -12,9 +14,10 @@ from gsuid_core.models import Event
 
 from ..utils.http import MusicRequestError, get_text, get_location
 from ..musicuid_card import PlatformResult, send_song_list
-from ..musicuid_play import play_song
+from ..musicuid_play import play_song, search_songs
 from ..utils.provider import PROVIDERS
 from ..musicuid_config import music_config
+from ..utils.json_tools import to_obj, get_obj, get_str
 from ..musicuid_play.session import save_session
 
 sv_resolve = SV("链接解析", priority=6)
@@ -39,6 +42,101 @@ MOBILE_UA = (
 )
 # 需要先跟随 302 才能拿到真实链接的短链域名
 SHORT_HOSTS = ("163cn.tv", "c6.y.qq.com")
+
+# QQ音乐 App 分享到群里的是 json 卡片（app 名固定）。第三方协议能拿到原始 json，
+# 但 GsCore 只把 text 段拼进 raw_text，所以卡片必须单独扫 content
+JSON_CARD_APP = "com.tencent.music.lua"
+JSON_CARD_TYPES = ("json", "light_app", "ark")
+JSON_CARD_TEXT_RE = re.compile(r"\[json:data=(.+?)\]", re.S)
+
+
+@dataclass(frozen=True)
+class MusicCard:
+    """QQ音乐卡片里抽出的曲目信息。
+
+    Attributes:
+        songmid: QQ音乐 songmid，卡片没带时为空。
+        title: 歌名。
+        singers: 歌手。
+    """
+
+    songmid: str
+    title: str
+    singers: str
+
+
+def decode_card(raw: str) -> dict[str, object]:
+    """解析一段卡片 json，取出 QQ音乐卡片的 ``meta.music``。
+
+    Args:
+        raw: 消息段里的原始 json 文本。
+
+    Returns:
+        卡片内容对象；不是 QQ音乐卡片时返回空对象。
+    """
+    try:
+        payload = to_obj(json.loads(raw))
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    if get_str(payload, "app") != JSON_CARD_APP:
+        return {}
+    return get_obj(get_obj(payload, "meta"), "music")
+
+
+def iter_music_cards(ev: Event) -> list[MusicCard]:
+    """从一条消息里找出所有 QQ音乐卡片。
+
+    卡片可能以 json 段上报，也可能被适配器塞进 raw_text 的 ``[json:data=...]``，
+    两种都收。
+
+    Args:
+        ev: The triggering event.
+
+    Returns:
+        解析出的卡片；非卡片消息返回空列表。
+    """
+    raws: list[str] = []
+    for msg in ev.content:
+        if msg.type not in JSON_CARD_TYPES:
+            continue
+        data = msg.data
+        if isinstance(data, str):
+            raws.append(data)
+        elif isinstance(data, dict):
+            inner = get_str(to_obj(data), "data")
+            if inner:
+                raws.append(inner)
+    raws.extend(match.group(1) for match in JSON_CARD_TEXT_RE.finditer(ev.raw_text))
+
+    cards: list[MusicCard] = []
+    for raw in raws:
+        music = decode_card(raw)
+        if not music:
+            continue
+        # 卡片不一定带 songmid，jumpUrl 里的 songDetail/{mid} 是更可靠的来源
+        songmid = get_str(music, "songmid")
+        if not songmid:
+            match = QQ_SONGMID_RE.search(get_str(music, "jumpUrl"))
+            songmid = match.group(1) if match else ""
+        title = get_str(music, "title")
+        if not songmid and not title:
+            continue
+        cards.append(MusicCard(songmid=songmid, title=title, singers=get_str(music, "desc")))
+    return cards
+
+
+def has_card_segment(ev: Event) -> bool:
+    """快速判断消息里有没有卡片段，避免每条消息都去解析 json。
+
+    Args:
+        ev: The triggering event.
+
+    Returns:
+        Whether the message may carry a QQ music card.
+    """
+    if "[json:data=" in ev.raw_text:
+        return True
+    return any(msg.type in JSON_CARD_TYPES for msg in ev.content)
 
 
 async def expand_short_link(url: str) -> str:
@@ -100,6 +198,24 @@ async def resolve_song(bot: Bot, platform: str, song_id: str) -> None:
         await bot.send("没有找到这首歌曲的信息，可能已下架")
         return
     await play_song(bot, song)
+
+
+async def resolve_card(bot: Bot, card: MusicCard) -> None:
+    """播放卡片里的歌：优先按 songmid 精确取，退化到按歌名搜索。
+
+    Args:
+        bot: Bot wrapper bound to the current event.
+        card: Card parsed out of the message.
+    """
+    if card.songmid:
+        await resolve_song(bot, "qq", card.songmid)
+        return
+    keyword = f"{card.title} {card.singers}".strip()
+    songs = await search_songs("qq", keyword)
+    if not songs:
+        await bot.send(f"没能找到《{card.title}》")
+        return
+    await play_song(bot, songs[0])
 
 
 async def resolve_collection(bot: Bot, ev: Event, kind: str, collection_id: str) -> None:
@@ -179,3 +295,20 @@ async def resolve_share_link(bot: Bot, ev: Event) -> None:
         if collection_match is not None:
             await resolve_collection(bot, ev, collection_match.group(1), collection_match.group(2))
             return
+
+
+@sv_resolve.on_message(block=False)
+async def resolve_music_card(bot: Bot, ev: Event) -> None:
+    """解析 App 分享的 QQ音乐卡片并直接播放里面的歌。
+
+    Args:
+        bot: Bot wrapper bound to the current event.
+        ev: The triggering event.
+    """
+    if not music_config.get_config("enable_resolve").data:
+        return
+    if not has_card_segment(ev):
+        return
+    cards = iter_music_cards(ev)
+    if cards:
+        await resolve_card(bot, cards[0])

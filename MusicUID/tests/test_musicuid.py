@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from gsuid_core.models import Event
+from gsuid_core.models import Event, Message
 from MusicUID.MusicUID import musicuid_resolve as resolve_module, musicuid_lifecycle as lifecycle_module
 from MusicUID.MusicUID.utils.render import _env, close_browser
 from MusicUID.MusicUID.musicuid_play import session as session_module, parse_platform, default_platform
@@ -651,6 +651,55 @@ def test_qq_card_jump_url_from_real_payload() -> None:
     song = QQ_SONGID_RE.search(url_match.group(0)) or QQ_SONGMID_RE.search(url_match.group(0))
     assert song is not None
     assert song.group(1) == "000cflsu1FG3rW"
+
+
+def test_decode_card_reads_qq_music_meta() -> None:
+    """QQ音乐卡片的 meta.music 要能读出来（野机 json 段场景）。"""
+    raw = (
+        '{"app":"com.tencent.music.lua","bizsrc":"qqconnect.sdkshare_music",'
+        '"meta":{"music":{"title":"晴天","desc":"周杰伦",'
+        '"jumpUrl":"https://i.y.qq.com/v8/playsong.html?songmid=0039MnYb0qxYhV",'
+        '"musicUrl":"https://isure.stream.qqmusic.qq.com/C4000039MnYb0qxYhV.m4a?vkey=abc"}},'
+        '"prompt":"[QQ音乐]晴天","ver":"0.0.0.1","view":"music"}'
+    )
+    music = resolve_module.decode_card(raw)
+    assert get_str(music, "title") == "晴天"
+    assert get_str(music, "desc") == "周杰伦"
+
+
+def test_iter_music_cards_from_json_segment() -> None:
+    """json 段形态下也要找到卡片，songmid 从 jumpUrl 里取。"""
+    raw = (
+        '{"app":"com.tencent.music.lua","meta":{"music":{"title":"晴天","desc":"周杰伦",'
+        '"jumpUrl":"https://y.qq.com/n/ryqq/songDetail/0039MnYb0qxYhV"}}}'
+    )
+    ev = Event(content=[Message(type="json", data={"data": raw})])
+    cards = resolve_module.iter_music_cards(ev)
+    assert len(cards) == 1
+    assert cards[0].songmid == "0039MnYb0qxYhV"
+    assert cards[0].title == "晴天"
+    assert cards[0].singers == "周杰伦"
+
+
+def test_iter_music_cards_ignores_other_cards() -> None:
+    """小程序等其它卡片不能被误判成歌曲。"""
+    raw = '{"app":"com.tencent.miniapp_01","meta":{"detail_1":{"title":"某小程序"}}}'
+    ev = Event(content=[Message(type="json", data={"data": raw})])
+    assert resolve_module.iter_music_cards(ev) == []
+    assert resolve_module.has_card_segment(ev) is True
+    assert resolve_module.has_card_segment(Event()) is False
+
+
+def test_iter_music_cards_from_cq_text() -> None:
+    """适配器把卡片折成 [json:data=...] 文本时也要认。"""
+    raw = (
+        '{"app":"com.tencent.music.lua","meta":{"music":{"title":"夜曲","desc":"周杰伦",'
+        '"jumpUrl":"https://y.qq.com/n/ryqq/songDetail/001zMQr71F1Qo8"}}}'
+    )
+    ev = Event(raw_text=f"[json:data={raw}]")
+    cards = resolve_module.iter_music_cards(ev)
+    assert len(cards) == 1
+    assert cards[0].songmid == "001zMQr71F1Qo8"
 
 
 def test_kugou_card_link_carries_hash() -> None:
