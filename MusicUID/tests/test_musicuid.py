@@ -715,6 +715,46 @@ def test_iter_music_cards_from_cq_text() -> None:
     assert cards[0].songmid == "001zMQr71F1Qo8"
 
 
+def test_iter_card_urls_from_netease_card() -> None:
+    """其它平台的卡片没有 songmid，从卡片里捞跳转链接再走链接解析。"""
+    raw = (
+        '{"app":"com.tencent.structmsg","meta":{"news":{"title":"晴天 - 周杰伦",'
+        '"jumpUrl":"https://music.163.com/song?id=186016"}}}'
+    )
+    ev = Event(content=[Message(type="json", data={"data": raw})])
+    assert resolve_module.iter_card_urls(ev) == ["https://music.163.com/song?id=186016"]
+
+
+def test_iter_card_urls_from_kugou_card() -> None:
+    """酷狗卡片同样只给链接，hash 由链接解析那一步提。"""
+    raw = (
+        '{"app":"com.tencent.structmsg","meta":{"news":{"title":"晴天",'
+        '"jumpUrl":"https://www.kugou.com/song/#hash=0123456789abcdef0123456789abcdef"}}}'
+    )
+    ev = Event(content=[Message(type="json", data={"data": raw})])
+    assert resolve_module.iter_card_urls(ev) == ["https://www.kugou.com/song/#hash=0123456789abcdef0123456789abcdef"]
+
+
+def test_iter_card_urls_skips_qq_music_card() -> None:
+    """QQ音乐卡片走 songmid 精确取歌，不能再按链接重复播一次。"""
+    raw = (
+        '{"app":"com.tencent.music.lua","meta":{"music":{"title":"晴天",'
+        '"jumpUrl":"https://y.qq.com/n/ryqq/songDetail/0039MnYb0qxYhV"}}}'
+    )
+    ev = Event(content=[Message(type="json", data={"data": raw})])
+    assert resolve_module.iter_card_urls(ev) == []
+
+
+def test_iter_card_urls_ignores_media_and_miniapp() -> None:
+    """卡片里的图片/文件链接和无关小程序卡片都不能当音乐链接。"""
+    raw = (
+        '{"app":"com.tencent.miniapp_01","meta":{"news":{"title":"某小程序",'
+        '"preview":"https://multimedia.nt.qq.com.cn/download?fileid=abc"}}}'
+    )
+    ev = Event(content=[Message(type="json", data={"data": raw})])
+    assert resolve_module.iter_card_urls(ev) == []
+
+
 def test_kugou_card_link_carries_hash() -> None:
     """酷狗卡片/长链直接带 32 位 hash，它就是取流用的 song_id。"""
     card = (

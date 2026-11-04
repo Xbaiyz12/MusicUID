@@ -48,6 +48,8 @@ SHORT_HOSTS = ("163cn.tv", "c6.y.qq.com")
 JSON_CARD_APP = "com.tencent.music.lua"
 JSON_CARD_TYPES = ("json", "light_app", "ark")
 JSON_CARD_TEXT_RE = re.compile(r"\[json:data=(.+?)\]", re.S)
+# 其它平台的卡片没有固定 app 名，统一从卡片里捞出跳转链接再按链接解析
+SHARE_LINK_RE = re.compile(r"(music\.163\.com|163cn\.tv|y\.qq\.com|kugou\.com)")
 
 
 @dataclass(frozen=True)
@@ -83,8 +85,8 @@ def decode_card(raw: str) -> dict[str, object]:
     return get_obj(get_obj(payload, "meta"), "music")
 
 
-def iter_music_cards(ev: Event) -> list[MusicCard]:
-    """从一条消息里找出所有 QQ音乐卡片。
+def iter_card_raws(ev: Event) -> list[str]:
+    """收集消息里所有卡片的原始 json 文本。
 
     卡片可能以 json 段上报，也可能被适配器塞进 raw_text 的 ``[json:data=...]``，
     两种都收。
@@ -93,7 +95,7 @@ def iter_music_cards(ev: Event) -> list[MusicCard]:
         ev: The triggering event.
 
     Returns:
-        解析出的卡片；非卡片消息返回空列表。
+        原始 json 文本列表。
     """
     raws: list[str] = []
     for msg in ev.content:
@@ -107,9 +109,20 @@ def iter_music_cards(ev: Event) -> list[MusicCard]:
             if inner:
                 raws.append(inner)
     raws.extend(match.group(1) for match in JSON_CARD_TEXT_RE.finditer(ev.raw_text))
+    return raws
 
+
+def iter_music_cards(ev: Event) -> list[MusicCard]:
+    """从一条消息里找出所有 QQ音乐卡片。
+
+    Args:
+        ev: The triggering event.
+
+    Returns:
+        解析出的卡片；非卡片消息返回空列表。
+    """
     cards: list[MusicCard] = []
-    for raw in raws:
+    for raw in iter_card_raws(ev):
         music = decode_card(raw)
         if not music:
             continue
@@ -123,6 +136,49 @@ def iter_music_cards(ev: Event) -> list[MusicCard]:
             continue
         cards.append(MusicCard(songmid=songmid, title=title, singers=get_str(music, "desc")))
     return cards
+
+
+def _collect_share_urls(value: object, out: list[str]) -> None:
+    """递归收集卡片里指向音乐平台的链接。
+
+    Args:
+        value: 卡片 json 的任意层节点。
+        out: 结果列表，原地追加并去重。
+    """
+    if isinstance(value, str):
+        for match in URL_RE.finditer(value):
+            url = match.group(0)
+            if SHARE_LINK_RE.search(url) and url not in out:
+                out.append(url)
+    elif isinstance(value, dict):
+        for item in value.values():
+            _collect_share_urls(item, out)
+    elif isinstance(value, list):
+        for item in value:
+            _collect_share_urls(item, out)
+
+
+def iter_card_urls(ev: Event) -> list[str]:
+    """从任意平台的卡片里捞出音乐链接。
+
+    QQ音乐卡片有 songmid，走 ``iter_music_cards`` 更精确，这里跳过避免重复播放。
+
+    Args:
+        ev: The triggering event.
+
+    Returns:
+        卡片里找到的链接；没有卡片或卡片不含链接时为空列表。
+    """
+    urls: list[str] = []
+    for raw in iter_card_raws(ev):
+        try:
+            payload = to_obj(json.loads(raw))
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if get_str(payload, "app") == JSON_CARD_APP:
+            continue
+        _collect_share_urls(payload, urls)
+    return urls
 
 
 def has_card_segment(ev: Event) -> bool:
@@ -242,6 +298,54 @@ async def resolve_collection(bot: Bot, ev: Event, kind: str, collection_id: str)
     await send_song_list(bot, collection.name, [PlatformResult(platform=provider.platform, songs=songs)], "听1")
 
 
+async def resolve_link_target(bot: Bot, ev: Event, target: str) -> bool:
+    """按平台规则解析一个已展开的链接。
+
+    Args:
+        bot: Bot wrapper bound to the current event.
+        ev: The triggering event.
+        target: 已展开的完整链接。
+
+    Returns:
+        是否命中并已处理。
+    """
+    netease_song = NETEASE_SONG_RE.search(target)
+    if netease_song is not None:
+        await resolve_song(bot, "netease", netease_song.group(1))
+        return True
+
+    # QQ音乐三种分享格式：数字 songid、App 卡片的 songmid 参数、songDetail 路径，detail() 都认
+    qq_song = QQ_SONGID_RE.search(target) or QQ_SONGMID_RE.search(target)
+    if qq_song is not None:
+        await resolve_song(bot, "qq", qq_song.group(1))
+        return True
+
+    # 酷狗分享链接的两种形态：长链/卡片直接带 hash，App 纯链接只带 chain
+    kugou_hash = KUGOU_HASH_RE.search(target)
+    if kugou_hash is not None:
+        await resolve_song(bot, "kugou", kugou_hash.group(1))
+        return True
+
+    kugou_chain = KUGOU_CHAIN_RE.search(target)
+    if kugou_chain is not None:
+        try:
+            song_hash = await resolve_kugou_chain(kugou_chain.group(1))
+        except MusicRequestError as e:
+            logger.debug(f"[MusicUID] 酷狗 chain 展开失败：{e}")
+            return False
+        if not song_hash:
+            await bot.send("没能从这条酷狗分享链接里解析出歌曲")
+            return True
+        await resolve_song(bot, "kugou", song_hash)
+        return True
+
+    collection_match = NETEASE_COLLECTION_RE.search(target)
+    if collection_match is not None:
+        await resolve_collection(bot, ev, collection_match.group(1), collection_match.group(2))
+        return True
+    return False
+
+
 @sv_resolve.on_regex(r"(music\.163\.com|163cn\.tv|y\.qq\.com|kugou\.com)", block=False)
 async def resolve_share_link(bot: Bot, ev: Event) -> None:
     """解析分享链接：单曲直接播放，歌单/专辑列出歌曲并可通过 听N 选播。
@@ -260,46 +364,15 @@ async def resolve_share_link(bot: Bot, ev: Event) -> None:
         except MusicRequestError as e:
             logger.debug(f"[MusicUID] 短链展开失败：{e}")
             continue
-
-        netease_song = NETEASE_SONG_RE.search(target)
-        if netease_song is not None:
-            await resolve_song(bot, "netease", netease_song.group(1))
-            return
-
-        # QQ音乐三种分享格式：数字 songid、App 卡片的 songmid 参数、songDetail 路径，detail() 都认
-        qq_song = QQ_SONGID_RE.search(target) or QQ_SONGMID_RE.search(target)
-        if qq_song is not None:
-            await resolve_song(bot, "qq", qq_song.group(1))
-            return
-
-        # 酷狗分享链接的两种形态：长链/卡片直接带 hash，App 纯链接只带 chain
-        kugou_hash = KUGOU_HASH_RE.search(target)
-        if kugou_hash is not None:
-            await resolve_song(bot, "kugou", kugou_hash.group(1))
-            return
-
-        kugou_chain = KUGOU_CHAIN_RE.search(target)
-        if kugou_chain is not None:
-            try:
-                song_hash = await resolve_kugou_chain(kugou_chain.group(1))
-            except MusicRequestError as e:
-                logger.debug(f"[MusicUID] 酷狗 chain 展开失败：{e}")
-                continue
-            if not song_hash:
-                await bot.send("没能从这条酷狗分享链接里解析出歌曲")
-                return
-            await resolve_song(bot, "kugou", song_hash)
-            return
-
-        collection_match = NETEASE_COLLECTION_RE.search(target)
-        if collection_match is not None:
-            await resolve_collection(bot, ev, collection_match.group(1), collection_match.group(2))
+        if await resolve_link_target(bot, ev, target):
             return
 
 
 @sv_resolve.on_message(block=False)
 async def resolve_music_card(bot: Bot, ev: Event) -> None:
-    """解析 App 分享的 QQ音乐卡片并直接播放里面的歌。
+    """解析 App 分享的音乐卡片：QQ音乐按 songmid 取歌，其它平台捞链接再解析。
+
+    卡片是 json 段，得靠适配器上报；适配器丢弃时消息不会进 core，插件无从解析。
 
     Args:
         bot: Bot wrapper bound to the current event.
@@ -312,3 +385,12 @@ async def resolve_music_card(bot: Bot, ev: Event) -> None:
     cards = iter_music_cards(ev)
     if cards:
         await resolve_card(bot, cards[0])
+        return
+    for url in iter_card_urls(ev):
+        try:
+            target = await expand_short_link(url)
+        except MusicRequestError as e:
+            logger.debug(f"[MusicUID] 卡片链接展开失败：{e}")
+            continue
+        if await resolve_link_target(bot, ev, target):
+            return
