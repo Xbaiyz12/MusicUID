@@ -1825,7 +1825,7 @@ def test_revive_qq_account_checks_membership(tmp_path: pytest.TempPathFactory, m
     assert accounts.load_accounts("qq")[0].active is True
 
 
-def test_resave_keeps_suspended_state(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resave_keeps_suspended_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """凭据续期重写账号池不能把挂起的号重新启用，否则会员校验就被绕过了。"""
     from MusicUID.MusicUID.utils import accounts
 
@@ -1840,3 +1840,30 @@ def test_resave_keeps_suspended_state(tmp_path: pytest.TempPathFactory, monkeypa
     # 没有历史状态的新号按启用处理
     assert accounts.save_account("qq", "新号", "uin=999888; qm_keyst=x") is True
     assert accounts.load_accounts("qq")[1].active is True
+
+
+def test_bundled_korean_font_is_shipped() -> None:
+    """韩文字体随插件分发：Docker 镜像没装系统字体时靠它兜底。"""
+    from MusicUID.MusicUID.utils.fonts import KOREAN_FONT_PATH
+
+    assert KOREAN_FONT_PATH.is_file()
+    assert KOREAN_FONT_PATH.stat().st_size > 100_000
+
+
+def test_bundled_font_missing_returns_false(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from MusicUID.MusicUID.utils import fonts as fonts_module
+
+    monkeypatch.setattr(fonts_module, "KOREAN_FONT_PATH", tmp_path / "absent.ttf")
+    assert fonts_module.register_bundled_fonts() is False
+
+
+def test_bundled_font_enters_renderer_fallback() -> None:
+    """注册成功后谚文脸必须进回退链，否则渲染时又会退回豆腐块。"""
+    from gsuid_core.utils import html_render as html_render_module
+    from MusicUID.MusicUID.utils.fonts import register_bundled_fonts
+
+    if html_render_module._RendererCls is None:
+        pytest.skip("pytakumi 未安装，无法验证真实注册")
+
+    assert register_bundled_fonts() is True
+    assert html_render_module.KOREAN_FONT_NAME in html_render_module._font_families("MiSans")

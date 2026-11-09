@@ -1,1 +1,4 @@
 * text=auto eol=lf
+*.ttf binary
+*.woff2 binary
+*.otf binary

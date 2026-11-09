@@ -11,6 +11,7 @@ from gsuid_core.logger import logger
 from gsuid_core.server import on_core_start, on_core_shutdown
 
 from ..utils.http import close_client
+from ..utils.fonts import register_bundled_fonts
 from ..utils.login import auto_refresh_qq_job
 from ..utils.render import render_ready, close_browser, reclaim_stale_browser
 from ..musicuid_tasks import auto_daily_task_job
@@ -136,6 +137,7 @@ async def prepare_render_env() -> None:
 
     if pytakumi_available():
         logger.info("[MusicUID] 卡片渲染就绪（pytakumi，无需浏览器）")
+        register_bundled_fonts()
         return
     logger.info("[MusicUID] 未检测到 pytakumi，将尝试浏览器渲染回退")
     if not music_config.get_config("auto_install_render").data:

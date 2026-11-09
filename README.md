@@ -69,13 +69,22 @@ Cookie、超时、临时文件保留等其余配置项，含义见配置页内�
 
 发送网易云 / QQ音乐 / 酷狗的分享链接会自动解析并播放；歌单与专辑会列出歌曲，可用「听N」选播。
 
-三个平台（网易云 / QQ 音乐 / 酷狗）分享到群里的**卡片**目前都解析不了，请发文本链接。
+群里的**卡片**同样会尝试解析：QQ 音乐卡片（`com.tencent.music.lua`）按 `songmid` 精确取歌，
+其余卡片（网易云 / 酷狗等）从 JSON 里递归找音乐链接再走链接解析（也认正文里的 `[json:data=...]`）。
 
-卡片在协议里是 `json` 段，不少适配器直接丢弃；纯卡片消息（没有文字）会整条不上报，core 连内容都拿不到。
-即使拿到了，插件也只识别 QQ 音乐卡片（`com.tencent.music.lua`），网易云 / 酷狗卡片没有解析规则。
+能不能收到取决于上游适配器：卡片在协议里是 `json` 段，部分适配器直接丢弃，纯卡片消息（没有文字）
+会整条不上报，core 连内容都拿不到。遇到发卡片没反应，先确认适配器放行了 `json` 段——例如 AstrBot 的
+gscore 适配器，需要在 `_build_single_content` 里补一条 `Json` 分支。
 
-遇到发卡片没反应，先确认上游适配器有没有放行 `json` 段——例如 AstrBot 的 gscore 适配器，
-需要在 `_build_single_content` 里补一条 `Json` 分支；放行之后也只有 QQ 音乐卡片能被识别。
+## 韩文渲染
+
+歌名里的韩文（谚文）需要韩文字体；渲染器只认已注册的字体，系统装了也不会自动生效：
+
+- **Windows / macOS**：框架自动探测系统韩文字体（`malgun.ttf`、`AppleSDGothicNeo.ttc` 等），无需处理。
+- **Linux / Docker**：镜像通常没装，插件启动时会把自己带的一份 Nanum Gothic（OFL-1.1，
+  `MusicUID/resource/fonts/NanumGothic-Regular.ttf`）注册成框架的谚文回退脸，装插件即不缺字形。
+- 想换字体：把任意韩文字体放进 `<core>/gsuid_core/utils/fonts/`，文件名带 `KR`
+  （如 `NotoSansKR-Regular.otf`）即可被自动加载。
 
 ## 开发
 
