@@ -1979,8 +1979,48 @@ def test_music_card_sign_request_uses_audio_url(monkeypatch: pytest.MonkeyPatch)
             "jump": "https://y.qq.com/n/ryqq/songDetail/MID",
             "song": "晴天",
             "singer": "周杰伦",
+            "format": "qq",
         },
     }
+
+
+@pytest.mark.parametrize(
+    ("platform", "source_url", "card_format"),
+    [
+        ("qq", "https://y.qq.com/n/ryqq/songDetail/MID", "qq"),
+        ("netease", "https://music.163.com/song?id=MID", "163"),
+        ("kugou", "https://www.kugou.com/song/#hash=MID", "kugou"),
+    ],
+)
+def test_music_card_passes_platform_format(
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    source_url: str,
+    card_format: str,
+) -> None:
+    """签名服务按平台区分卡片样式：qq / 163 / kugou。"""
+    from MusicUID.MusicUID.utils import music_card
+
+    captured: dict[str, object] = {}
+    card_json = (
+        '{"app":"com.tencent.music.lua","view":"music","config":{"token":"t"},'
+        f'"meta":{{"music":{{"musicUrl":"https://cdn.example/a.mp3","jumpUrl":"{source_url}"}}}}}}'
+    )
+
+    async def fake_get_json(url: str, params: dict[str, str | int] | None = None) -> object:
+        captured["params"] = params
+        return {"code": 1, "message": card_json}
+
+    monkeypatch.setattr(music_card, "get_json", fake_get_json)
+    song = SongInfo(platform=platform, song_id="MID", name="晴天", singers="周杰伦")
+    info = music_card.build_card_info(song, "https://cdn.example/a.mp3")
+    assert info.format == card_format
+    assert asyncio.run(music_card.sign_music_card("https://sign.example/api", info)) == card_json
+    params = captured["params"]
+    assert isinstance(params, dict)
+    assert params["url"] == "https://cdn.example/a.mp3"
+    assert params["jump"] == source_url
+    assert params["format"] == card_format
 
 
 def test_music_card_independent_from_bot_id(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -25,6 +25,13 @@ SOURCE_URLS: Final[dict[str, str]] = {
     "kugou": "https://www.kugou.com/song/#hash={song_id}",
 }
 
+# 签名服务按平台区分卡片样式
+CARD_FORMATS: Final[dict[str, str]] = {
+    "qq": "qq",
+    "netease": "163",
+    "kugou": "kugou",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class MusicCardInfo:
@@ -36,6 +43,7 @@ class MusicCardInfo:
         title: 歌曲标题。
         artist: 歌手。
         cover_url: 封面链接，可为空。
+        format: 签名服务的平台标识，``qq`` / ``163`` / ``kugou``。
     """
 
     audio_url: str
@@ -43,6 +51,7 @@ class MusicCardInfo:
     title: str
     artist: str
     cover_url: str = ""
+    format: str = ""
 
 
 CallBotApi = Callable[[str, dict[str, object], str], Awaitable[object]]
@@ -78,6 +87,7 @@ def build_card_info(song: SongInfo, audio_url: str) -> MusicCardInfo:
         title=song.name,
         artist=song.singers,
         cover_url=song.cover_url,
+        format=CARD_FORMATS.get(song.platform, ""),
     )
 
 
@@ -146,6 +156,8 @@ async def sign_music_card(sign_url: str, info: MusicCardInfo) -> str:
         params["singer"] = info.artist
     if info.cover_url:
         params["cover"] = info.cover_url
+    if info.format:
+        params["format"] = info.format
     payload = await asyncio.wait_for(
         get_json(sign_url, params=params),
         timeout=CARD_REQUEST_TIMEOUT_SEC,
