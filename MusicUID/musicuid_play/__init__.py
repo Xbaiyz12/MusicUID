@@ -16,6 +16,7 @@ from ..musicuid_card import PlatformResult, send_song_list, send_text_card
 from ..utils.delivery import deliver_audio
 from ..utils.provider import PROVIDERS, DEFAULT_PLATFORM, SongInfo, get_provider, resolve_platform
 from ..musicuid_config import music_config
+from ..utils.music_card import send_music_card
 
 sv_song_request = SV("点歌", priority=5)
 sv_song_pick = SV("选歌播放", priority=5)
@@ -127,6 +128,15 @@ async def play_song(bot: Bot, song: SongInfo) -> None:
     if not provider.supports_play:
         await bot.send(f"{provider.display_name} 暂不支持音频下发，只提供搜索与信息展示")
         return
+    if not any(
+        (
+            music_config.get_config("send_voice").data,
+            music_config.get_config("send_file").data,
+            music_config.get_config("send_music_card").data,
+        )
+    ):
+        await bot.send("语音、文件、卡片发送均已关闭，请在配置里至少开启一项才能收到歌曲")
+        return
     # 取流加下载可能要十几秒，先回一句，免得用户以为命令没触发
     if music_config.get_config("download_hint").data:
         await bot.send(f"⏬ 正在准备《{song.name}》，稍等…")
@@ -149,22 +159,35 @@ async def play_song(bot: Bot, song: SongInfo) -> None:
     header = f"🎵 {song.name} - {song.singers}"
     if song.album:
         header += f"\n💽 {song.album}"
-    reason = await deliver_audio(
-        bot,
-        song,
-        audio_url,
-        header=header,
-        send_voice=music_config.get_config("send_voice").data,
-        send_file=music_config.get_config("send_file").data,
-        local_ref=music_config.get_config("local_file_ref").data,
-        timeout=float(music_config.get_config("download_timeout").data),
-        keep_sec=music_config.get_config("keep_temp_sec").data,
-        voice_max_mb=music_config.get_config("voice_max_mb").data,
-        voice_bitrate=music_config.get_config("voice_bitrate").data,
-        write_meta=music_config.get_config("write_meta").data,
+    card_task = asyncio.create_task(_send_card_quietly(bot, song, audio_url))
+    result, _ = await asyncio.gather(
+        deliver_audio(
+            bot,
+            song,
+            audio_url,
+            header=header,
+            send_voice=music_config.get_config("send_voice").data,
+            send_file=music_config.get_config("send_file").data,
+            local_ref=music_config.get_config("local_file_ref").data,
+            timeout=float(music_config.get_config("download_timeout").data),
+            keep_sec=music_config.get_config("keep_temp_sec").data,
+            voice_max_mb=music_config.get_config("voice_max_mb").data,
+            voice_bitrate=music_config.get_config("voice_bitrate").data,
+            write_meta=music_config.get_config("write_meta").data,
+        ),
+        card_task,
     )
-    if reason:
-        await bot.send(reason)
+    if result:
+        await bot.send(result)
+
+
+async def _send_card_quietly(bot: Bot, song: SongInfo, audio_url: str) -> bool:
+    """卡片是附加消息，任何异常都不能向音频链路传播。"""
+    try:
+        return await send_music_card(bot, song, audio_url)
+    except Exception as e:  # noqa: BLE001 - 卡片失败不能影响语音/文件
+        logger.debug(f"[MusicUID] 音乐卡片发送异常：{e}")
+        return False
 
 
 @sv_song_request.on_command(("点歌", "搜歌", "搜索歌曲"), block=True, to_ai="搜索指定歌曲并返回音乐卡片列表")

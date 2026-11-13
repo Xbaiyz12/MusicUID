@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import sys
+import json
 import asyncio
 import hashlib
 from types import SimpleNamespace
@@ -1748,6 +1749,555 @@ def test_deliver_audio_renames_before_metadata_and_send(
     assert metadata_paths[0].exists()
     assert not list(tmp_path.glob("*.part"))
     assert bot.messages
+
+
+def test_deliver_audio_skips_download_when_voice_and_file_are_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only the card switch on should not trigger an audio download."""
+    from MusicUID.MusicUID.utils import delivery
+
+    async def boom(*args: object, **kwargs: object) -> bytes:
+        raise AssertionError("voice/file off should skip download")
+
+    monkeypatch.setattr(delivery, "download", boom)
+
+    class FakeBot:
+        bot_id = "onebot"
+
+        async def send(self, message: object) -> None:
+            raise AssertionError("nothing to send")
+
+    song = SongInfo(platform="qq", song_id="MID", name="晴天", singers="周杰伦")
+    reason = asyncio.run(
+        delivery.deliver_audio(
+            FakeBot(),
+            song,
+            "https://example.com/audio",
+            header="header",
+            send_voice=False,
+            send_file=False,
+            local_ref=False,
+            timeout=5,
+            keep_sec=10,
+            voice_max_mb=10,
+            voice_bitrate=128,
+            write_meta=False,
+        )
+    )
+    assert reason == ""
+
+
+def test_music_card_is_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    from MusicUID.MusicUID.utils import music_card
+    from MusicUID.MusicUID.musicuid_config import CONFIG_DEFAULT
+
+    assert CONFIG_DEFAULT["send_music_card"].data is False
+    assert CONFIG_DEFAULT["music_card_sign_url"].data == "https://itapi.top/api/QQMusicJSONArk"
+    assert CONFIG_DEFAULT["music_card_params"].data == ""
+    assert CONFIG_DEFAULT["music_card_formats"].data == ["qq", "163", "kugou"]
+
+    async def boom(*args: object, **kwargs: object) -> object:
+        raise AssertionError("disabled card should not call OneBotUID")
+
+    monkeypatch.setattr(music_card, "_load_call_bot_api", lambda: boom)
+    bot = SimpleNamespace(ev=Event(user_id="1", user_type="direct"), bot_self_id="10001")
+    song = SongInfo(platform="qq", song_id="MID", name="晴天", singers="周杰伦")
+    assert asyncio.run(music_card.send_music_card(bot, song, "https://example.com/a.mp3")) is False
+
+
+def test_music_card_missing_onebotuid_is_silent(monkeypatch: pytest.MonkeyPatch) -> None:
+    from MusicUID.MusicUID.utils import music_card
+
+    config_values: dict[str, object] = {
+        "send_music_card": True,
+        "music_card_sign_url": "https://itapi.top/api/QQMusicJSONArk",
+        "music_card_params": "",
+        "music_card_formats": ["qq", "163", "kugou"],
+    }
+    monkeypatch.setattr(
+        music_card.music_config,
+        "get_config",
+        lambda name: SimpleNamespace(data=config_values[name]),
+    )
+    monkeypatch.setattr(music_card, "_load_call_bot_api", lambda: None)
+    bot = SimpleNamespace(ev=Event(user_id="1", user_type="direct"), bot_self_id="10001")
+    song = SongInfo(platform="qq", song_id="MID", name="晴天", singers="周杰伦")
+    assert asyncio.run(music_card.send_music_card(bot, song, "https://example.com/a.mp3")) is False
+
+
+@pytest.mark.parametrize(
+    ("user_type", "target_id", "action", "id_key"),
+    [
+        ("group", 7777, "send_group_msg", "group_id"),
+        ("direct", 10001, "send_private_msg", "user_id"),
+    ],
+)
+def test_music_card_calls_onebot_api(
+    monkeypatch: pytest.MonkeyPatch,
+    user_type: str,
+    target_id: int,
+    action: str,
+    id_key: str,
+) -> None:
+    from MusicUID.MusicUID.utils import music_card
+
+    card_json = (
+        '{"app":"com.tencent.music.lua","view":"music","config":{"token":"t"},'
+        '"meta":{"music":{"musicUrl":"https://example.com/a.mp3","jumpUrl":"https://y.qq.com/n/ryqq/songDetail/MID"}}}'
+    )
+    calls: list[tuple[str, dict[str, object], str]] = []
+
+    async def fake_sign(sign_url: str, info: object, custom_params: object = None) -> str:
+        assert sign_url == "https://itapi.top/api/QQMusicJSONArk"
+        return card_json
+
+    async def fake_call(action_name: str, params: dict[str, object], self_id: str) -> object:
+        calls.append((action_name, params, self_id))
+        return {"message_id": "1"}
+
+    config_values: dict[str, object] = {
+        "send_music_card": True,
+        "music_card_sign_url": "https://itapi.top/api/QQMusicJSONArk",
+        "music_card_params": "",
+        "music_card_formats": ["qq", "163", "kugou"],
+    }
+    monkeypatch.setattr(
+        music_card.music_config,
+        "get_config",
+        lambda name: SimpleNamespace(data=config_values[name]),
+    )
+    monkeypatch.setattr(music_card, "sign_music_card", fake_sign)
+    monkeypatch.setattr(music_card, "_load_call_bot_api", lambda: fake_call)
+    ev = (
+        Event(user_id="10001", user_type="group", group_id=str(target_id))
+        if user_type == "group"
+        else Event(user_id=str(target_id), user_type="direct")
+    )
+    bot = SimpleNamespace(ev=ev, bot_self_id="2074093811")
+    song = SongInfo(platform="qq", song_id="MID", name="晴天", singers="周杰伦")
+
+    assert asyncio.run(music_card.send_music_card(bot, song, "https://example.com/a.mp3")) is True
+    assert calls == [
+        (
+            action,
+            {
+                id_key: target_id,
+                "message": [{"type": "json", "data": {"data": card_json}}],
+            },
+            "2074093811",
+        )
+    ]
+
+
+def test_music_card_sign_failure_is_silent(monkeypatch: pytest.MonkeyPatch) -> None:
+    from MusicUID.MusicUID.utils import music_card
+    from MusicUID.MusicUID.utils.http import MusicRequestError
+
+    async def boom(*args: object, **kwargs: object) -> str:
+        raise MusicRequestError("签名服务不可用")
+
+    config_values: dict[str, object] = {
+        "send_music_card": True,
+        "music_card_sign_url": "https://itapi.top/api/QQMusicJSONArk",
+        "music_card_params": "",
+        "music_card_formats": ["qq", "163", "kugou"],
+    }
+    monkeypatch.setattr(
+        music_card.music_config,
+        "get_config",
+        lambda name: SimpleNamespace(data=config_values[name]),
+    )
+    monkeypatch.setattr(music_card, "sign_music_card", boom)
+    monkeypatch.setattr(music_card, "_load_call_bot_api", lambda: boom)
+    bot = SimpleNamespace(ev=Event(user_id="1", user_type="direct"), bot_self_id="10001")
+    song = SongInfo(platform="qq", song_id="MID", name="晴天", singers="周杰伦")
+    assert asyncio.run(music_card.send_music_card(bot, song, "https://example.com/a.mp3")) is False
+
+
+def test_music_card_send_failure_is_silent(monkeypatch: pytest.MonkeyPatch) -> None:
+    from MusicUID.MusicUID.utils import music_card
+
+    card_json = (
+        '{"app":"com.tencent.music.lua","view":"music","config":{"token":"t"},'
+        '"meta":{"music":{"musicUrl":"https://example.com/a.mp3","jumpUrl":"https://y.qq.com/n/ryqq/songDetail/MID"}}}'
+    )
+
+    async def fake_sign(sign_url: str, info: object, custom_params: object = None) -> str:
+        return card_json
+
+    async def boom(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("协议端拒绝")
+
+    config_values: dict[str, object] = {
+        "send_music_card": True,
+        "music_card_sign_url": "https://itapi.top/api/QQMusicJSONArk",
+        "music_card_params": "",
+        "music_card_formats": ["qq", "163", "kugou"],
+    }
+    monkeypatch.setattr(
+        music_card.music_config,
+        "get_config",
+        lambda name: SimpleNamespace(data=config_values[name]),
+    )
+    monkeypatch.setattr(music_card, "sign_music_card", fake_sign)
+    monkeypatch.setattr(music_card, "_load_call_bot_api", lambda: boom)
+    bot = SimpleNamespace(ev=Event(user_id="1", user_type="direct"), bot_self_id="10001")
+    song = SongInfo(platform="qq", song_id="MID", name="晴天", singers="周杰伦")
+    assert asyncio.run(music_card.send_music_card(bot, song, "https://example.com/a.mp3")) is False
+
+
+def test_music_card_uses_signed_message_verbatim() -> None:
+    from MusicUID.MusicUID.utils import music_card
+
+    info = music_card.MusicCardInfo(
+        audio_url="https://example.com/a.mp3",
+        source_url="https://y.qq.com/n/ryqq/songDetail/MID",
+        title="晴天",
+        artist="周杰伦",
+    )
+    raw = (
+        '{"app":"com.tencent.music.lua","view":"music","config":{"token":"t"},'
+        '"meta":{"music":{"musicUrl":"https://example.com/a.mp3","jumpUrl":"https://y.qq.com/n/ryqq/songDetail/MID"}}}'
+    )
+    assert music_card._signed_message({"code": 1, "message": raw}) == raw
+    assert music_card._validate_card(raw, info) is True
+    assert music_card._signed_message({"code": -1, "message": raw}) == ""
+    assert music_card._signed_message({"code": 1, "data": raw}) == ""
+    assert music_card._signed_message({"code": 200, "data": json.loads(raw)}).startswith(
+        '{"app":"com.tencent.music.lua"'
+    )
+
+
+def test_music_card_parse_custom_params() -> None:
+    from MusicUID.MusicUID.utils.music_card import parse_custom_params
+
+    assert parse_custom_params("") == {}
+    assert parse_custom_params("key:abc") == {"key": "abc"}
+    assert parse_custom_params("key:abc\ntoken:x:y") == {"key": "abc", "token": "x:y"}
+    assert parse_custom_params("key:abc,token:xyz") == {"key": "abc", "token": "xyz"}
+    assert parse_custom_params("bad,key:") == {"key": ""}
+    assert parse_custom_params(None) == {}
+
+
+def test_music_card_platform_format_order() -> None:
+    from MusicUID.MusicUID.utils.music_card import platform_format
+
+    assert platform_format("netease", ["qq", "163", "kugou"]) == "163"
+    assert platform_format("qq", ["qq", "163", "kugou"]) == "qq"
+    assert platform_format("kugou", ["qq", "163", "kugou"]) == "kugou"
+    assert platform_format("netease", ["a", "b", "c"]) == "b"
+    assert platform_format("netease", []) == "163"
+    assert platform_format("netease", ["x"]) == "163"
+    assert platform_format("unknown", ["qq", "163", "kugou"]) == ""
+
+
+def test_music_card_sign_request_uses_audio_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    from MusicUID.MusicUID.utils import music_card
+
+    captured: dict[str, object] = {}
+    card_json = (
+        '{"app":"com.tencent.music.lua","view":"music","config":{"token":"t"},'
+        '"meta":{"music":{"musicUrl":"https://cdn.example/a.mp3","jumpUrl":"https://y.qq.com/n/ryqq/songDetail/MID"}}}'
+    )
+
+    async def fake_get_json(url: str, params: dict[str, str | int] | None = None) -> object:
+        captured["url"] = url
+        captured["params"] = params
+        return {"code": 1, "message": card_json}
+
+    monkeypatch.setattr(music_card, "get_json", fake_get_json)
+    song = SongInfo(platform="qq", song_id="MID", name="晴天", singers="周杰伦")
+    info = music_card.build_card_info(song, "https://cdn.example/a.mp3")
+    card = asyncio.run(music_card.sign_music_card("https://sign.example/api", info))
+    assert card == card_json
+    assert captured == {
+        "url": "https://sign.example/api",
+        "params": {
+            "url": "https://cdn.example/a.mp3",
+            "jump": "https://y.qq.com/n/ryqq/songDetail/MID",
+            "song": "晴天",
+            "singer": "周杰伦",
+            "format": "qq",
+        },
+    }
+
+
+def test_music_card_custom_params_are_appended_without_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    from MusicUID.MusicUID.utils import music_card
+
+    captured: dict[str, object] = {}
+    card_json = (
+        '{"app":"com.tencent.music.lua","view":"music","config":{"token":"t"},'
+        '"meta":{"music":{"musicUrl":"https://cdn.example/a.mp3","jumpUrl":"https://y.qq.com/n/ryqq/songDetail/MID"}}}'
+    )
+
+    async def fake_get_json(url: str, params: dict[str, str | int] | None = None) -> object:
+        captured["params"] = params
+        return {"code": 200, "data": json.loads(card_json)}
+
+    monkeypatch.setattr(music_card, "get_json", fake_get_json)
+    song = SongInfo(platform="qq", song_id="MID", name="晴天", singers="周杰伦")
+    info = music_card.build_card_info(song, "https://cdn.example/a.mp3")
+    card = asyncio.run(
+        music_card.sign_music_card(
+            "https://sign.example/api",
+            info,
+            {"key": "secret", "format": "hijack", "song": "hijack"},
+        )
+    )
+    assert card == card_json
+    params = captured["params"]
+    assert isinstance(params, dict)
+    assert params["key"] == "secret"
+    assert params["format"] == "qq"
+    assert params["song"] == "晴天"
+
+
+def test_music_card_retries_with_direct_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """共享客户端被签名服务断开时，应换独立连接重试一次。"""
+    from MusicUID.MusicUID.utils import music_card
+
+    card_json = (
+        '{"app":"com.tencent.music.lua","view":"music","config":{"token":"t"},'
+        '"meta":{"music":{"musicUrl":"https://cdn.example/a.mp3","jumpUrl":"https://y.qq.com/n/ryqq/songDetail/MID"}}}'
+    )
+    calls: list[str] = []
+
+    async def broken_shared(url: str, params: dict[str, str | int] | None = None) -> object:
+        calls.append("shared")
+        raise RuntimeError("SSL EOF")
+
+    async def direct(url: str, params: dict[str, str | int]) -> object:
+        calls.append("direct")
+        return {"code": 200, "data": json.loads(card_json)}
+
+    monkeypatch.setattr(music_card, "get_json", broken_shared)
+    monkeypatch.setattr(music_card, "_get_json_direct", direct)
+    song = SongInfo(platform="qq", song_id="MID", name="晴天", singers="周杰伦")
+    info = music_card.build_card_info(song, "https://cdn.example/a.mp3")
+    assert asyncio.run(music_card.sign_music_card("https://sign.example/api", info)) == card_json
+    assert calls == ["shared", "direct"]
+
+
+@pytest.mark.parametrize(
+    ("platform", "source_url", "card_format"),
+    [
+        ("qq", "https://y.qq.com/n/ryqq/songDetail/MID", "qq"),
+        ("netease", "https://music.163.com/song?id=MID", "163"),
+        ("kugou", "https://www.kugou.com/song/#hash=MID", "kugou"),
+    ],
+)
+def test_music_card_passes_platform_format(
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    source_url: str,
+    card_format: str,
+) -> None:
+    """签名服务按平台区分卡片样式：qq / 163 / kugou。"""
+    from MusicUID.MusicUID.utils import music_card
+
+    captured: dict[str, object] = {}
+    card_json = (
+        '{"app":"com.tencent.music.lua","view":"music","config":{"token":"t"},'
+        f'"meta":{{"music":{{"musicUrl":"https://cdn.example/a.mp3","jumpUrl":"{source_url}"}}}}}}'
+    )
+
+    async def fake_get_json(url: str, params: dict[str, str | int] | None = None) -> object:
+        captured["params"] = params
+        return {"code": 1, "message": card_json}
+
+    monkeypatch.setattr(music_card, "get_json", fake_get_json)
+    song = SongInfo(platform=platform, song_id="MID", name="晴天", singers="周杰伦")
+    info = music_card.build_card_info(song, "https://cdn.example/a.mp3")
+    assert info.format == card_format
+    assert asyncio.run(music_card.sign_music_card("https://sign.example/api", info)) == card_json
+    params = captured["params"]
+    assert isinstance(params, dict)
+    assert params["url"] == "https://cdn.example/a.mp3"
+    assert params["jump"] == source_url
+    assert params["format"] == card_format
+
+
+def test_music_card_independent_from_bot_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Card availability comes from OneBotUID import, not bot_id."""
+    from MusicUID.MusicUID.utils import music_card
+
+    called: list[str] = []
+
+    async def fake_sign(sign_url: str, info: object, custom_params: object = None) -> str:
+        return (
+            '{"app":"com.tencent.music.lua","view":"music","config":{"token":"t"},'
+            '"meta":{"music":{"musicUrl":"https://example.com/a.mp3",'
+            '"jumpUrl":"https://y.qq.com/n/ryqq/songDetail/MID"}}}'
+        )
+
+    async def fake_call(action: str, params: dict[str, object], self_id: str) -> object:
+        called.append(action)
+        return {"message_id": "1"}
+
+    config_values: dict[str, object] = {
+        "send_music_card": True,
+        "music_card_sign_url": "https://itapi.top/api/QQMusicJSONArk",
+        "music_card_params": "",
+        "music_card_formats": ["qq", "163", "kugou"],
+    }
+    monkeypatch.setattr(
+        music_card.music_config,
+        "get_config",
+        lambda name: SimpleNamespace(data=config_values[name]),
+    )
+    monkeypatch.setattr(music_card, "sign_music_card", fake_sign)
+    monkeypatch.setattr(music_card, "_load_call_bot_api", lambda: fake_call)
+    bot = SimpleNamespace(
+        bot_id="AstrBot",
+        real_bot_id="AstrBot",
+        ev=Event(user_id="1", user_type="direct"),
+        bot_self_id="10001",
+    )
+    song = SongInfo(platform="qq", song_id="MID", name="晴天", singers="周杰伦")
+    assert asyncio.run(music_card.send_music_card(bot, song, "https://example.com/a.mp3")) is True
+    assert called == ["send_private_msg"]
+
+
+def test_play_song_card_only_sends_card_without_audio(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only the card switch on should not download audio or report a send failure."""
+    from MusicUID.MusicUID import musicuid_play
+    from MusicUID.MusicUID.utils import delivery
+    from MusicUID.MusicUID.musicuid_play import play_song
+
+    sent: list[object] = []
+    cards: list[SongInfo] = []
+
+    async def no_download(*args: object, **kwargs: object) -> bytes:
+        raise AssertionError("card-only mode should not download audio")
+
+    async def fake_card(bot: object, song: SongInfo, audio_url: str) -> bool:
+        cards.append(song)
+        assert audio_url == "https://example.com/audio"
+        return True
+
+    class FakeProvider:
+        display_name = "QQ音乐"
+        supports_play = True
+
+        async def play_url(self, song: SongInfo) -> str:
+            return "https://example.com/audio"
+
+    class FakeBot:
+        bot_id = "onebot"
+
+        async def send(self, message: object) -> None:
+            sent.append(message)
+
+    monkeypatch.setattr(delivery, "download", no_download)
+    monkeypatch.setattr(musicuid_play, "send_music_card", fake_card)
+    monkeypatch.setattr(
+        musicuid_play,
+        "music_config",
+        SimpleNamespace(
+            get_config=lambda name: SimpleNamespace(
+                data={
+                    "download_hint": False,
+                    "send_voice": False,
+                    "send_file": False,
+                    "send_music_card": True,
+                    "local_file_ref": False,
+                    "download_timeout": 5,
+                    "keep_temp_sec": 10,
+                    "voice_max_mb": 10,
+                    "voice_bitrate": 128,
+                    "write_meta": False,
+                }[name]
+            )
+        ),
+    )
+    monkeypatch.setattr(musicuid_play, "get_provider", lambda platform: FakeProvider())
+    song = SongInfo(platform="qq", song_id="MID", name="晴天", singers="周杰伦")
+    asyncio.run(play_song(FakeBot(), song))
+    assert cards == [song]
+    assert sent == []
+
+
+def test_play_song_card_failure_does_not_block_audio(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Card failure must not suppress voice/file delivery."""
+    from MusicUID.MusicUID import musicuid_play
+    from MusicUID.MusicUID.musicuid_play import play_song
+
+    delivered: list[SongInfo] = []
+
+    async def fake_card(bot: object, song: SongInfo, audio_url: str) -> bool:
+        assert audio_url == "https://example.com/audio"
+        raise RuntimeError("签名服务异常")
+
+    async def fake_deliver(bot: object, song: SongInfo, audio_url: str, **kwargs: object) -> str:
+        delivered.append(song)
+        return ""
+
+    class FakeProvider:
+        display_name = "QQ音乐"
+        supports_play = True
+
+        async def play_url(self, song: SongInfo) -> str:
+            return "https://example.com/audio"
+
+    class FakeBot:
+        bot_id = "onebot"
+
+        async def send(self, message: object) -> None:
+            return None
+
+    monkeypatch.setattr(musicuid_play, "send_music_card", fake_card)
+    monkeypatch.setattr(musicuid_play, "deliver_audio", fake_deliver)
+    monkeypatch.setattr(
+        musicuid_play,
+        "music_config",
+        SimpleNamespace(
+            get_config=lambda name: SimpleNamespace(
+                data={
+                    "download_hint": False,
+                    "send_voice": True,
+                    "send_file": False,
+                    "send_music_card": True,
+                    "local_file_ref": False,
+                    "download_timeout": 5,
+                    "keep_temp_sec": 10,
+                    "voice_max_mb": 10,
+                    "voice_bitrate": 128,
+                    "write_meta": False,
+                }[name]
+            )
+        ),
+    )
+    monkeypatch.setattr(musicuid_play, "get_provider", lambda platform: FakeProvider())
+    song = SongInfo(platform="qq", song_id="MID", name="晴天", singers="周杰伦")
+    asyncio.run(play_song(FakeBot(), song))
+    assert delivered == [song]
+
+
+def test_play_song_reports_when_all_switches_are_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    from MusicUID.MusicUID import musicuid_play
+
+    sent: list[object] = []
+
+    class FakeBot:
+        async def send(self, message: object) -> None:
+            sent.append(message)
+
+    monkeypatch.setattr(
+        musicuid_play,
+        "music_config",
+        SimpleNamespace(
+            get_config=lambda name: SimpleNamespace(
+                data={
+                    "send_voice": False,
+                    "send_file": False,
+                    "send_music_card": False,
+                }[name]
+            )
+        ),
+    )
+    song = SongInfo(platform="qq", song_id="MID", name="晴天", singers="周杰伦")
+    asyncio.run(musicuid_play.play_song(FakeBot(), song))
+    assert sent == ["语音、文件、卡片发送均已关闭，请在配置里至少开启一项才能收到歌曲"]
 
 
 def test_netease_transport_error_is_not_account_failure(

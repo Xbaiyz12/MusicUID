@@ -74,6 +74,27 @@ CONFIG_DEFAULT: Dict[str, GSC] = {
     ),
     "send_voice": GsBoolConfig("语音发送", "以语音消息发送音频（歌曲较长时体验更好）", True),
     "send_file": GsBoolConfig("文件发送", "额外再发一份音频文件；语音能正常收听时无需开启", False),
+    "send_music_card": GsBoolConfig(
+        "音乐卡片发送",
+        "请确保通过OneBotUID插件连接至协议端，其他适配器暂不支持卡片发送",
+        False,
+    ),
+    "music_card_sign_url": GsStrConfig(
+        "音乐卡片签名地址",
+        "接收音乐文件直链并返回签名卡片的服务地址，默认使用 OIAPI；也可换成自建服务",
+        "https://itapi.top/api/QQMusicJSONArk",
+    ),
+    "music_card_params": GsStrConfig(
+        "自定义请求参数",
+        "写法为{key}:{value}；可用于需要传递验证令牌的场景，可空",
+        "",
+        secret=True,
+    ),
+    "music_card_formats": GsListStrConfig(
+        "签名服务器平台format",
+        "请按照顺序网易云、qq、酷狗填入配置",
+        ["qq", "163", "kugou"],
+    ),
     "local_file_ref": GsBoolConfig(
         "强制本机路径引用",
         "默认按渠道自动选择：QQ 官方发 file:// 本机路径（它的适配器认不出无后缀的 base64 音频），"
