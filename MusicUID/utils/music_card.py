@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import asyncio
 from typing import Final
 from dataclasses import dataclass
@@ -106,21 +107,24 @@ def _is_http_url(value: str) -> bool:
 
 
 def _signed_message(payload: object) -> str:
-    """取出签名接口返回的原始卡片 JSON。"""
+    """取出签名接口返回的卡片 JSON，兼容 message 与 data 两种形态。"""
     if not isinstance(payload, dict):
         return ""
     code = payload.get("code")
-    if code not in (0, 1):
+    if code not in (0, 1, 200):
         return ""
     message = payload.get("message")
-    return message.strip() if isinstance(message, str) else ""
+    if isinstance(message, str) and message.strip():
+        return message.strip()
+    data = payload.get("data")
+    if isinstance(data, dict):
+        return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    return ""
 
 
 def _validate_card(card_json: str, info: MusicCardInfo) -> bool:
     """校验签名结果确实对应这首歌，避免把错误卡片发出去。"""
     try:
-        import json
-
         card = json.loads(card_json)
     except ValueError:
         return False
@@ -142,8 +146,42 @@ def _validate_card(card_json: str, info: MusicCardInfo) -> bool:
     return music_url.replace(" ", "+") == info.audio_url and jump_url == info.source_url
 
 
-async def sign_music_card(sign_url: str, info: MusicCardInfo) -> str:
-    """请求签名服务并返回原样可发送的卡片 JSON。"""
+def parse_custom_params(raw: object) -> dict[str, str]:
+    """解析 ``{key}:{value}`` 形式的自定义请求参数。
+
+    支持逗号或换行分隔；值可含冒号。空项忽略，键名重复时后者覆盖前者。
+
+    Args:
+        raw: 配置里的原始文本。
+
+    Returns:
+        解析后的参数映射；格式异常或空配置返回空字典。
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return {}
+    params: dict[str, str] = {}
+    for item in text.replace("，", ",").replace("\r", "\n").split("\n"):
+        for chunk in item.split(","):
+            key, sep, value = chunk.partition(":")
+            key = key.strip()
+            if sep and key:
+                params[key] = value.strip()
+    return params
+
+
+async def sign_music_card(
+    sign_url: str,
+    info: MusicCardInfo,
+    custom_params: dict[str, str] | None = None,
+) -> str:
+    """请求签名服务并返回原样可发送的卡片 JSON。
+
+    Args:
+        sign_url: 签名服务地址。
+        info: 歌曲与音频直链信息。
+        custom_params: 额外查询参数，如 ``{"key": "..."}``；不覆盖内置参数。
+    """
     if not sign_url or not _is_http_url(info.audio_url) or not _is_http_url(info.source_url):
         return ""
     params: dict[str, str | int] = {
@@ -158,6 +196,8 @@ async def sign_music_card(sign_url: str, info: MusicCardInfo) -> str:
         params["cover"] = info.cover_url
     if info.format:
         params["format"] = info.format
+    for key, value in (custom_params or {}).items():
+        params.setdefault(key, value)
     payload = await asyncio.wait_for(
         get_json(sign_url, params=params),
         timeout=CARD_REQUEST_TIMEOUT_SEC,
@@ -187,8 +227,9 @@ async def send_music_card(bot: Bot, song: SongInfo, audio_url: str) -> bool:
     if call_bot_api is None:
         return False
     sign_url = str(music_config.get_config("music_card_sign_url").data).strip()
+    custom_params = parse_custom_params(music_config.get_config("music_card_params").data)
     try:
-        card = await sign_music_card(sign_url, build_card_info(song, audio_url))
+        card = await sign_music_card(sign_url, build_card_info(song, audio_url), custom_params)
     except Exception as e:  # noqa: BLE001 - 签名失败不能影响音频与卡片开关
         logger.debug(f"[MusicUID] 音乐卡片签名失败：{e}")
         return False

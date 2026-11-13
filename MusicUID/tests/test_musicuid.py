@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import sys
+import json
 import asyncio
 import hashlib
 from types import SimpleNamespace
@@ -1791,6 +1792,7 @@ def test_music_card_is_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert CONFIG_DEFAULT["send_music_card"].data is False
     assert CONFIG_DEFAULT["music_card_sign_url"].data == "https://itapi.top/api/QQMusicJSONArk"
+    assert CONFIG_DEFAULT["music_card_params"].data == ""
 
     async def boom(*args: object, **kwargs: object) -> object:
         raise AssertionError("disabled card should not call OneBotUID")
@@ -1807,6 +1809,7 @@ def test_music_card_missing_onebotuid_is_silent(monkeypatch: pytest.MonkeyPatch)
     config_values: dict[str, object] = {
         "send_music_card": True,
         "music_card_sign_url": "https://itapi.top/api/QQMusicJSONArk",
+        "music_card_params": "",
     }
     monkeypatch.setattr(
         music_card.music_config,
@@ -1841,7 +1844,7 @@ def test_music_card_calls_onebot_api(
     )
     calls: list[tuple[str, dict[str, object], str]] = []
 
-    async def fake_sign(sign_url: str, info: object) -> str:
+    async def fake_sign(sign_url: str, info: object, custom_params: object = None) -> str:
         assert sign_url == "https://itapi.top/api/QQMusicJSONArk"
         return card_json
 
@@ -1852,6 +1855,7 @@ def test_music_card_calls_onebot_api(
     config_values: dict[str, object] = {
         "send_music_card": True,
         "music_card_sign_url": "https://itapi.top/api/QQMusicJSONArk",
+        "music_card_params": "",
     }
     monkeypatch.setattr(
         music_card.music_config,
@@ -1891,6 +1895,7 @@ def test_music_card_sign_failure_is_silent(monkeypatch: pytest.MonkeyPatch) -> N
     config_values: dict[str, object] = {
         "send_music_card": True,
         "music_card_sign_url": "https://itapi.top/api/QQMusicJSONArk",
+        "music_card_params": "",
     }
     monkeypatch.setattr(
         music_card.music_config,
@@ -1912,7 +1917,7 @@ def test_music_card_send_failure_is_silent(monkeypatch: pytest.MonkeyPatch) -> N
         '"meta":{"music":{"musicUrl":"https://example.com/a.mp3","jumpUrl":"https://y.qq.com/n/ryqq/songDetail/MID"}}}'
     )
 
-    async def fake_sign(sign_url: str, info: object) -> str:
+    async def fake_sign(sign_url: str, info: object, custom_params: object = None) -> str:
         return card_json
 
     async def boom(*args: object, **kwargs: object) -> object:
@@ -1921,6 +1926,7 @@ def test_music_card_send_failure_is_silent(monkeypatch: pytest.MonkeyPatch) -> N
     config_values: dict[str, object] = {
         "send_music_card": True,
         "music_card_sign_url": "https://itapi.top/api/QQMusicJSONArk",
+        "music_card_params": "",
     }
     monkeypatch.setattr(
         music_card.music_config,
@@ -1951,6 +1957,20 @@ def test_music_card_uses_signed_message_verbatim() -> None:
     assert music_card._validate_card(raw, info) is True
     assert music_card._signed_message({"code": -1, "message": raw}) == ""
     assert music_card._signed_message({"code": 1, "data": raw}) == ""
+    assert music_card._signed_message({"code": 200, "data": json.loads(raw)}).startswith(
+        '{"app":"com.tencent.music.lua"'
+    )
+
+
+def test_music_card_parse_custom_params() -> None:
+    from MusicUID.MusicUID.utils.music_card import parse_custom_params
+
+    assert parse_custom_params("") == {}
+    assert parse_custom_params("key:abc") == {"key": "abc"}
+    assert parse_custom_params("key:abc\ntoken:x:y") == {"key": "abc", "token": "x:y"}
+    assert parse_custom_params("key:abc,token:xyz") == {"key": "abc", "token": "xyz"}
+    assert parse_custom_params("bad,key:") == {"key": ""}
+    assert parse_custom_params(None) == {}
 
 
 def test_music_card_sign_request_uses_audio_url(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1982,6 +2002,37 @@ def test_music_card_sign_request_uses_audio_url(monkeypatch: pytest.MonkeyPatch)
             "format": "qq",
         },
     }
+
+
+def test_music_card_custom_params_are_appended_without_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    from MusicUID.MusicUID.utils import music_card
+
+    captured: dict[str, object] = {}
+    card_json = (
+        '{"app":"com.tencent.music.lua","view":"music","config":{"token":"t"},'
+        '"meta":{"music":{"musicUrl":"https://cdn.example/a.mp3","jumpUrl":"https://y.qq.com/n/ryqq/songDetail/MID"}}}'
+    )
+
+    async def fake_get_json(url: str, params: dict[str, str | int] | None = None) -> object:
+        captured["params"] = params
+        return {"code": 200, "data": json.loads(card_json)}
+
+    monkeypatch.setattr(music_card, "get_json", fake_get_json)
+    song = SongInfo(platform="qq", song_id="MID", name="晴天", singers="周杰伦")
+    info = music_card.build_card_info(song, "https://cdn.example/a.mp3")
+    card = asyncio.run(
+        music_card.sign_music_card(
+            "https://sign.example/api",
+            info,
+            {"key": "secret", "format": "hijack", "song": "hijack"},
+        )
+    )
+    assert card == card_json
+    params = captured["params"]
+    assert isinstance(params, dict)
+    assert params["key"] == "secret"
+    assert params["format"] == "qq"
+    assert params["song"] == "晴天"
 
 
 @pytest.mark.parametrize(
@@ -2029,7 +2080,7 @@ def test_music_card_independent_from_bot_id(monkeypatch: pytest.MonkeyPatch) -> 
 
     called: list[str] = []
 
-    async def fake_sign(sign_url: str, info: object) -> str:
+    async def fake_sign(sign_url: str, info: object, custom_params: object = None) -> str:
         return (
             '{"app":"com.tencent.music.lua","view":"music","config":{"token":"t"},'
             '"meta":{"music":{"musicUrl":"https://example.com/a.mp3",'
@@ -2043,6 +2094,7 @@ def test_music_card_independent_from_bot_id(monkeypatch: pytest.MonkeyPatch) -> 
     config_values: dict[str, object] = {
         "send_music_card": True,
         "music_card_sign_url": "https://itapi.top/api/QQMusicJSONArk",
+        "music_card_params": "",
     }
     monkeypatch.setattr(
         music_card.music_config,

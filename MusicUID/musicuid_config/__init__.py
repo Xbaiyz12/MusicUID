@@ -84,6 +84,12 @@ CONFIG_DEFAULT: Dict[str, GSC] = {
         "接收音乐文件直链并返回签名卡片的服务地址，默认使用 OIAPI；也可换成自建服务",
         "https://itapi.top/api/QQMusicJSONArk",
     ),
+    "music_card_params": GsStrConfig(
+        "自定义请求参数",
+        "写法为{key}:{value}；可用于需要传递验证令牌的场景，可空",
+        "",
+        secret=True,
+    ),
     "local_file_ref": GsBoolConfig(
         "强制本机路径引用",
         "默认按渠道自动选择：QQ 官方发 file:// 本机路径（它的适配器认不出无后缀的 base64 音频），"
