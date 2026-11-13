@@ -9,10 +9,12 @@ from dataclasses import dataclass
 from urllib.parse import urlsplit
 from collections.abc import Callable, Awaitable
 
+import httpx
+
 from gsuid_core.bot import Bot
 from gsuid_core.logger import logger
 
-from .http import get_json
+from .http import USER_AGENT, get_json
 from .provider import SongInfo
 from ..musicuid_config import music_config
 
@@ -26,12 +28,9 @@ SOURCE_URLS: Final[dict[str, str]] = {
     "kugou": "https://www.kugou.com/song/#hash={song_id}",
 }
 
-# 签名服务按平台区分卡片样式
-CARD_FORMATS: Final[dict[str, str]] = {
-    "qq": "qq",
-    "netease": "163",
-    "kugou": "kugou",
-}
+# 配置列表按位置对应：qq、网易云、酷狗
+CARD_FORMAT_ORDER: Final[tuple[str, ...]] = ("qq", "netease", "kugou")
+DEFAULT_CARD_FORMATS: Final[tuple[str, ...]] = ("qq", "163", "kugou")
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,7 +43,7 @@ class MusicCardInfo:
         title: 歌曲标题。
         artist: 歌手。
         cover_url: 封面链接，可为空。
-        format: 签名服务的平台标识，``qq`` / ``163`` / ``kugou``。
+        format: 签名服务的平台标识。
     """
 
     audio_url: str
@@ -80,15 +79,36 @@ def song_source_url(song: SongInfo) -> str:
     return template.format(song_id=song.song_id) if template else ""
 
 
-def build_card_info(song: SongInfo, audio_url: str) -> MusicCardInfo:
-    """组装签名参数所需的歌曲信息。"""
+def platform_format(platform: str, formats: object = None) -> str:
+    """按配置列表位置取平台对应的 format。"""
+    values: list[str] = []
+    if isinstance(formats, list):
+        values = [str(item).strip() for item in formats]
+    if len(values) < len(DEFAULT_CARD_FORMATS):
+        values = list(DEFAULT_CARD_FORMATS)
+    try:
+        index = CARD_FORMAT_ORDER.index(platform)
+    except ValueError:
+        return ""
+    value = values[index] if index < len(values) else DEFAULT_CARD_FORMATS[index]
+    return value or DEFAULT_CARD_FORMATS[index]
+
+
+def build_card_info(song: SongInfo, audio_url: str, formats: object = None) -> MusicCardInfo:
+    """组装签名参数所需的歌曲信息。
+
+    Args:
+        song: 已解析的平台歌曲。
+        audio_url: 解析后的音频直链。
+        formats: ``签名服务器平台format`` 配置值。
+    """
     return MusicCardInfo(
         audio_url=audio_url,
         source_url=song_source_url(song),
         title=song.name,
         artist=song.singers,
         cover_url=song.cover_url,
-        format=CARD_FORMATS.get(song.platform, ""),
+        format=platform_format(song.platform, formats),
     )
 
 
@@ -198,12 +218,32 @@ async def sign_music_card(
         params["format"] = info.format
     for key, value in (custom_params or {}).items():
         params.setdefault(key, value)
-    payload = await asyncio.wait_for(
-        get_json(sign_url, params=params),
-        timeout=CARD_REQUEST_TIMEOUT_SEC,
-    )
+    try:
+        payload = await asyncio.wait_for(
+            get_json(sign_url, params=params),
+            timeout=CARD_REQUEST_TIMEOUT_SEC,
+        )
+    except Exception as first_error:
+        logger.debug(f"[MusicUID] 音乐卡片签名首次请求失败，改用独立连接重试：{first_error}")
+        payload = await asyncio.wait_for(
+            _get_json_direct(sign_url, params),
+            timeout=CARD_REQUEST_TIMEOUT_SEC,
+        )
     card = _signed_message(payload)
     return card if card and _validate_card(card, info) else ""
+
+
+async def _get_json_direct(url: str, params: dict[str, str | int]) -> object:
+    """部分签名服务会打断共享连接，换独立客户端重试一次。"""
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(CARD_REQUEST_TIMEOUT_SEC),
+        headers={"User-Agent": USER_AGENT},
+        follow_redirects=True,
+        trust_env=False,
+    ) as client:
+        res = await client.get(url, params=params)
+        res.raise_for_status()
+        return res.json()
 
 
 async def send_music_card(bot: Bot, song: SongInfo, audio_url: str) -> bool:
@@ -222,19 +262,22 @@ async def send_music_card(bot: Bot, song: SongInfo, audio_url: str) -> bool:
     direct = bot.ev.user_type == "direct"
     target_id = bot.ev.user_id if direct else bot.ev.group_id
     if not target_id:
+        logger.warning("[MusicUID] 音乐卡片缺少群号/用户号，已跳过")
         return False
     call_bot_api = _load_call_bot_api()
     if call_bot_api is None:
+        logger.warning("[MusicUID] 未安装 OneBotUID，音乐卡片已跳过")
         return False
     sign_url = str(music_config.get_config("music_card_sign_url").data).strip()
     custom_params = parse_custom_params(music_config.get_config("music_card_params").data)
+    formats = music_config.get_config("music_card_formats").data
     try:
-        card = await sign_music_card(sign_url, build_card_info(song, audio_url), custom_params)
+        card = await sign_music_card(sign_url, build_card_info(song, audio_url, formats), custom_params)
     except Exception as e:  # noqa: BLE001 - 签名失败不能影响音频与卡片开关
-        logger.debug(f"[MusicUID] 音乐卡片签名失败：{e}")
+        logger.warning(f"[MusicUID] 音乐卡片签名失败：{e}")
         return False
     if not card:
-        logger.debug(f"[MusicUID] 音乐卡片签名结果为空（{song.platform}）")
+        logger.warning(f"[MusicUID] 音乐卡片签名结果为空（{song.platform}）")
         return False
     try:
         await call_bot_api(
@@ -246,7 +289,7 @@ async def send_music_card(bot: Bot, song: SongInfo, audio_url: str) -> bool:
             bot.bot_self_id,
         )
     except Exception as e:  # noqa: BLE001 - 适配器异常不能中断音频主链路
-        logger.debug(f"[MusicUID] OneBotUID 音乐卡片发送失败：{e}")
+        logger.warning(f"[MusicUID] OneBotUID 音乐卡片发送失败：{e}")
         return False
     logger.info(f"[MusicUID] 已通过 OneBotUID 下发音乐卡片：{song.name}")
     return True

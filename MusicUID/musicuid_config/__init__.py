@@ -90,6 +90,11 @@ CONFIG_DEFAULT: Dict[str, GSC] = {
         "",
         secret=True,
     ),
+    "music_card_formats": GsListStrConfig(
+        "签名服务器平台format",
+        "请按照顺序网易云、qq、酷狗填入配置",
+        ["qq", "163", "kugou"],
+    ),
     "local_file_ref": GsBoolConfig(
         "强制本机路径引用",
         "默认按渠道自动选择：QQ 官方发 file:// 本机路径（它的适配器认不出无后缀的 base64 音频），"
