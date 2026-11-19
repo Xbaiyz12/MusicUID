@@ -51,6 +51,8 @@
 | `default_platform` | `netease` | 未指定平台时使用 |
 | `max_list` | `5` | 每平台条数（最大 10） |
 | `send_voice` / `send_file` | `true` / `false` | 发语音 / 额外再发一份文件 |
+| `send_music_card` | `false` | 通过 OneBotUID 额外发送音乐卡片；语音、文件、卡片相互独立 |
+| `music_card_sign_url` | `https://itapi.top/api/QQMusicJSONArk` | 音乐卡片签名服务地址 |
 | `netease_level` | `exhigh` | 网易云音质；选 `lossless` 会按 flac 取流，文件名也是 `.flac` |
 | `download_hint` | `true` | 点歌后先回一句「正在准备」；QQ 官方通道每次回复算额度，介意可关 |
 | `write_meta` | `true` | 用内置 mutagen 把标题/歌手/专辑/专辑歌手写进音频（纯 Python，不重编码，支持 FLAC） |
@@ -64,6 +66,8 @@
 | `open_login` | `false` | 放开登录权限；新号先验会员（网易云 / QQ 音乐），没有的只挂起不参与取流 |
 
 Cookie、超时、临时文件保留等其余配置项，含义见配置页内的说明。
+
+`send_music_card` 只通过 OneBotUID 发送 QQ 音乐 JSON 卡片，其他适配器不支持。插件把解析后的音频直链交给签名服务，平台歌曲页作为点击跳转，并按平台传 `format`（QQ / 网易云 / 酷狗对应 `qq` / `163` / `kugou`）；签名返回的 JSON 原样放进 `json` 消息段。卡片、语音、文件三项开关互相独立，卡片失败不会影响音频下发。
 
 ## 分享链接解析
 
